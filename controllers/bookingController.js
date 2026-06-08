@@ -1,44 +1,52 @@
 const Booking = require("../models/Booking");
-const Nanny = require("../models/Nanny");
 
-// CREATE booking (famille réserve une nounou)
+// ======================
+// CREATE BOOKING
+// ======================
 exports.createBooking = async (req, res) => {
   try {
-    const familyId = req.user.id;
-    const { nannyId, date, durationHours, location } = req.body;
+    const io = req.app.get("io");
+    const onlineUsers = req.app.get("onlineUsers");
 
-    const nanny = await Nanny.findById(nannyId);
-
-    if (!nanny) {
-      return res.status(404).json({ message: "Nounou introuvable" });
-    }
-
-    const price = nanny.hourlyRate * durationHours;
+    const { providerId, type, description, city, price } = req.body;
 
     const booking = await Booking.create({
-      familyId,
-      nannyId,
-      date,
-      durationHours,
-      location,
+      familyId: req.user.id,
+      providerId,
+      type,
+      description,
+      city,
       price,
+      status: "pending",
     });
+
+    const providerSocket = onlineUsers.get(providerId);
+
+    if (providerSocket) {
+      io.to(providerSocket).emit("new_booking", {
+        message: "Nouvelle demande de réservation",
+        booking,
+      });
+    }
 
     res.status(201).json({
-      message: "Réservation créée",
+      message: "Booking envoyé + notification live",
       booking,
     });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// GET bookings de la famille
-exports.getMyBookings = async (req, res) => {
+// ======================
+// FAMILY BOOKINGS
+// ======================
+exports.getFamilyBookings = async (req, res) => {
   try {
-    const bookings = await Booking.find({ familyId: req.user.id })
-      .populate("nannyId")
-      .sort({ createdAt: -1 });
+    const bookings = await Booking.find({
+      familyId: req.user.id,
+    }).populate("providerId");
 
     res.json(bookings);
   } catch (error) {
@@ -46,12 +54,14 @@ exports.getMyBookings = async (req, res) => {
   }
 };
 
-// GET bookings de la nounou
-exports.getNannyBookings = async (req, res) => {
+// ======================
+// PROVIDER BOOKINGS
+// ======================
+exports.getProviderBookings = async (req, res) => {
   try {
-    const bookings = await Booking.find({ nannyId: req.params.id })
-      .populate("familyId", "name email")
-      .sort({ createdAt: -1 });
+    const bookings = await Booking.find({
+      providerId: req.user.id,
+    }).populate("familyId");
 
     res.json(bookings);
   } catch (error) {
@@ -59,24 +69,54 @@ exports.getNannyBookings = async (req, res) => {
   }
 };
 
-// UPDATE status (accept / reject / complete)
-exports.updateBookingStatus = async (req, res) => {
+// ======================
+// PROVIDER ACTION (ACCEPT / REJECT)
+// ======================
+exports.providerAction = async (req, res) => {
   try {
     const { status } = req.body;
 
-    const booking = await Booking.findById(req.params.id);
+    const booking = await Booking.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    );
 
-    if (!booking) {
-      return res.status(404).json({ message: "Réservation introuvable" });
-    }
+    res.json(booking);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
 
-    booking.status = status;
-    await booking.save();
+// ======================
+// START SERVICE
+// ======================
+exports.startService = async (req, res) => {
+  try {
+    const booking = await Booking.findByIdAndUpdate(
+      req.params.id,
+      { status: "in_progress" },
+      { new: true }
+    );
 
-    res.json({
-      message: "Statut mis à jour",
-      booking,
-    });
+    res.json(booking);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ======================
+// COMPLETE SERVICE
+// ======================
+exports.completeService = async (req, res) => {
+  try {
+    const booking = await Booking.findByIdAndUpdate(
+      req.params.id,
+      { status: "completed" },
+      { new: true }
+    );
+
+    res.json(booking);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

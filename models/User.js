@@ -2,69 +2,113 @@ const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema(
   {
-    // ================= IDENTITÉ =================
-    name: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-
+    // ======================
+    // AUTH
+    // ======================
     role: {
       type: String,
-      enum: ["family", "nanny", "teacher"],
-      required: true
+      enum: ["family", "nanny", "tutor"],
+      required: true,
     },
 
-    phone: String,
-    city: String,
-
-    // ================= PROFIL COMMUN =================
-    bio: String,
-    profileImage: String,
-
-    // ================= NANNY =================
-    nannyProfile: {
-      experienceYears: Number,
-      childAgeMin: Number,
-      childAgeMax: Number,
-      services: [String], // ex: ["baby-sitting", "nuit", "weekend"]
-      hourlyRate: Number
+    email: {
+      type: String,
+      unique: true,
+      required: true,
+      lowercase: true,
+      trim: true,
     },
 
-    // ================= TEACHER =================
-    teacherProfile: {
-      subjects: [String], // maths, anglais...
-      levels: [String],   // primaire, collège, lycée
-      hourlyRate: Number,
-      experienceYears: Number
+    password: {
+      type: String,
+      required: true,
     },
 
-    // ================= DISPONIBILITÉ =================
+    // ======================
+    // PROFILE COMMON
+    // ======================
+    firstName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    lastName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    phone: {
+      type: String,
+      required: true,
+    },
+
+    city: {
+      type: String,
+      required: true,
+    },
+
+    photo: {
+      type: String,
+      default: "",
+    },
+
+    bio: {
+      type: String,
+      default: "",
+    },
+
+    // ======================
+    // PROVIDER DATA (NANNY / TUTOR)
+    // ======================
+    serviceType: {
+      type: String,
+      enum: ["nanny", "tutor"],
+    },
+
+    subjects: {
+      type: [String],
+      default: [],
+    },
+
+    pricingType: {
+      type: String,
+      enum: ["hour", "session", "month"],
+    },
+
+    pricingAmount: {
+      type: Number,
+    },
+
+    // ======================
+    // MARKETPLACE STATUS
+    // ======================
     availability: {
-      monday: Boolean,
-      tuesday: Boolean,
-      wednesday: Boolean,
-      thursday: Boolean,
-      friday: Boolean,
-      saturday: Boolean,
-      sunday: Boolean
+      type: String,
+      enum: ["available", "busy", "away"],
+      default: "available",
     },
 
-    // ================= LOCALISATION =================
-    location: {
-      address: String,
-      city: String,
-      lat: Number,
-      lng: Number
-    },
-
-    // ================= STATS =================
     rating: {
       type: Number,
-      default: 0
+      default: 0,
     },
-    reviewsCount: {
-      type: Number,
-      default: 0
-    }
+
+    isVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    isProfileCompleted: {
+      type: Boolean,
+      default: false,
+    },
+
+    lastLogin: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );

@@ -2,15 +2,17 @@ const express = require("express");
 const router = express.Router();
 
 const nannyController = require("../controllers/nannyController");
-const authMiddleware = require("../middleware/authMiddleware");
 
-// créer / update profil
-router.post("/", authMiddleware, nannyController.createOrUpdateNanny);
-
-// mon profil
-router.get("/me", authMiddleware, nannyController.getMyNannyProfile);
-
-// marketplace
-router.get("/", nannyController.getAllNannies);
+// =====================================
+// GET ALL PROVIDERS
+// Query params:
+// ?city=Abidjan
+// ?type=nanny
+// ?type=tutor
+// ?subject=Maths
+// ?minPrice=1000
+// ?maxPrice=5000
+// =====================================
+router.get("/", nannyController.getNannies);
 
 module.exports = router;

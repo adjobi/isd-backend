@@ -2,42 +2,100 @@ const mongoose = require("mongoose");
 
 const bookingSchema = new mongoose.Schema(
   {
+    // ======================
+    // PARTIES
+    // ======================
     familyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
 
-    nannyId: {
+    providerId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Nanny",
+      ref: "User",
       required: true,
     },
 
-    date: {
-      type: Date,
-      required: true,
-    },
-
-    durationHours: {
-      type: Number,
-      default: 1,
-    },
-
-    status: {
+    // ======================
+    // SERVICE INFO
+    // ======================
+    serviceType: {
       type: String,
-      enum: ["pending", "accepted", "rejected", "completed"],
-      default: "pending",
+      enum: ["nanny", "tutor"],
+      required: true,
     },
 
-    location: {
+    subject: {
+      type: String, // tutor only
+    },
+
+    description: {
       type: String,
       default: "",
     },
 
+    city: {
+      type: String,
+      required: true,
+    },
+
+    // ======================
+    // PRICING SNAPSHOT (IMPORTANT)
+    // ======================
     price: {
       type: Number,
-      default: 0,
+      required: true,
+    },
+
+    pricingType: {
+      type: String,
+      enum: ["hour", "session", "month"],
+    },
+
+    // ======================
+    // STATUS WORKFLOW
+    // ======================
+    status: {
+      type: String,
+      enum: [
+        "pending",
+        "accepted",
+        "rejected",
+        "scheduled",
+        "active",
+        "completed",
+        "cancelled",
+      ],
+      default: "pending",
+    },
+
+    // ======================
+    // NEGOTIATION
+    // ======================
+    proposedDate: {
+      type: Date,
+    },
+
+    startDate: {
+      type: Date,
+    },
+
+    endDate: {
+      type: Date,
+    },
+
+    // ======================
+    // CHAT / SYSTEM TRIGGER
+    // ======================
+    chatEnabled: {
+      type: Boolean,
+      default: false,
+    },
+
+    isPaid: {
+      type: Boolean,
+      default: false,
     },
   },
   { timestamps: true }

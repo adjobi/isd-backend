@@ -1,66 +1,108 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const path = require("path");
+const http = require("http");
+const { Server } = require("socket.io");
 
-// 🔥 Force le chargement du .env (ULTRA fiable)
-dotenv.config({ path: path.resolve(__dirname, ".env") });
-
-const authMiddleware = require("./middleware/authMiddleware");
-
-const nannyRoutes = require("./routes/nannyRoutes");
-const bookingRoutes = require("./routes/bookingRoutes");
-const reviewRoutes = require("./routes/reviewRoutes");
-const searchRoutes = require("./routes/searchRoutes");
-const authRoutes = require("./routes/authRoutes");
+dotenv.config();
 
 const connectDB = require("./config/db");
 
-// 🔥 DEBUG
-console.log("MONGO_URI =", process.env.MONGO_URI);
+// =====================
+// ROUTES
+// =====================
+const authRoutes = require("./routes/authRoutes");
+const bookingRoutes = require("./routes/bookingRoutes");
+const nannyRoutes = require("./routes/nannyRoutes");
+const offerRoutes = require("./routes/offerRoutes");
 
-// Connexion DB
+// (OPTIONNEL MAIS RECOMMANDÉ)
+let notificationRoutes;
+try {
+  notificationRoutes = require("./routes/notificationRoutes");
+} catch (e) {
+  console.log("⚠️ notificationRoutes not found");
+}
+
+// =====================
+// SOCKET
+// =====================
+const initSocket = require("./socket/socketManager");
+
+// =====================
+// DB
+// =====================
 connectDB();
 
 const app = express();
 
-// Middlewares
-app.use(cors());
+// =====================
+// MIDDLEWARES
+// =====================
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE"]
+}));
+
 app.use(express.json());
 
-// ========================
-// ROUTES API
-// ========================
+// =====================
+// HTTP SERVER
+// =====================
+const server = http.createServer(app);
+
+// =====================
+// SOCKET.IO
+// =====================
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+  },
+});
+
+// SAFE INIT SOCKET
+let onlineUsers = new Map();
+
+try {
+  onlineUsers = initSocket(io);
+} catch (err) {
+  console.log("⚠️ Socket init failed:", err.message);
+}
+
+// GLOBALS
+app.set("io", io);
+app.set("onlineUsers", onlineUsers);
+
+// =====================
+// ROUTES
+// =====================
 app.use("/api/auth", authRoutes);
-app.use("/api/nannies", nannyRoutes);
 app.use("/api/bookings", bookingRoutes);
-app.use("/api/reviews", reviewRoutes);
-app.use("/api/search", searchRoutes);
+app.use("/api/nannies", nannyRoutes);
+app.use("/api/offers", offerRoutes);
+if (notificationRoutes) {
+  app.use("/api/notifications", notificationRoutes);
+}
 
-// ========================
-// ROUTES TEST
-// ========================
+// =====================
+// TEST ROUTES
+// =====================
 app.get("/", (req, res) => {
-  res.send("ISD API is running 🚀");
+  res.send("ISD Real-Time API 🚀");
 });
 
-app.get("/test", (req, res) => {
-  res.json({ message: "Backend OK ✔️" });
-});
-
-// Route protégée
-app.get("/api/profile", authMiddleware, (req, res) => {
+// DEBUG SOCKET USERS
+app.get("/api/debug/online-users", (req, res) => {
   res.json({
-    message: "Route protégée OK",
-    user: req.user,
+    onlineUsers: Array.from(onlineUsers.entries()),
   });
 });
 
-// ========================
-// LANCEMENT SERVEUR
-// ========================
+// =====================
+// START SERVER
+// =====================
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+server.listen(PORT, () => {
+  console.log("🚀 Server running on port", PORT);
 });

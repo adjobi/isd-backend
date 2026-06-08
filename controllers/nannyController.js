@@ -1,82 +1,90 @@
-const Nanny = require("../models/Nanny");
+const User = require("../models/User");
 
-// CREATE / UPDATE profil nounou
-exports.createOrUpdateNanny = async (req, res) => {
+// ===============================
+// GET NANNIES / TUTORS MARKETPLACE
+// ===============================
+exports.getNannies = async (req, res) => {
   try {
-    const userId = req.user.id;
-
     const {
-      bio,
-      services,
-      hourlyRate,
       city,
+      minPrice,
+      maxPrice,
+      type,
+      subject,
       availability,
-      experienceYears,
-    } = req.body;
+      page = 1,
+      limit = 20,
+    } = req.query;
 
-    let nanny = await Nanny.findOne({ userId });
+    let filter = {
+      role: { $in: ["nanny", "tutor"] },
+    };
 
-    if (nanny) {
-      // UPDATE
-      nanny.bio = bio;
-      nanny.services = services;
-      nanny.hourlyRate = hourlyRate;
-      nanny.city = city;
-      nanny.availability = availability;
-      nanny.experienceYears = experienceYears;
-
-      await nanny.save();
-
-      return res.json({
-        message: "Profil nounou mis à jour",
-        nanny,
-      });
+    // ======================
+    // CITY (CASE INSENSITIVE)
+    // ======================
+    if (city) {
+      filter.city = { $regex: city, $options: "i" };
     }
 
-    // CREATE
-    nanny = await Nanny.create({
-      userId,
-      bio,
-      services,
-      hourlyRate,
-      city,
-      availability,
-      experienceYears,
-    });
-
-    res.status(201).json({
-      message: "Profil nounou créé",
-      nanny,
-    });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
-// GET mon profil nounou
-exports.getMyNannyProfile = async (req, res) => {
-  try {
-    const nanny = await Nanny.findOne({ userId: req.user.id });
-
-    if (!nanny) {
-      return res.status(404).json({
-        message: "Profil nounou introuvable",
-      });
+    // ======================
+    // TYPE FILTER
+    // ======================
+    if (type) {
+      filter.serviceType = type;
     }
 
-    res.json(nanny);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+    // ======================
+    // PRICE RANGE
+    // ======================
+    if (minPrice || maxPrice) {
+      filter.pricingAmount = {};
+      if (minPrice) filter.pricingAmount.$gte = Number(minPrice);
+      if (maxPrice) filter.pricingAmount.$lte = Number(maxPrice);
+    }
 
-// GET toutes les nounous (marketplace)
-exports.getAllNannies = async (req, res) => {
-  try {
-    const nannies = await Nanny.find().populate("userId", "name email");
+    // ======================
+    // SUBJECT FILTER (TUTOR ONLY)
+    // ======================
+    if (subject && type === "tutor") {
+      filter.subjects = { $in: [subject] };
+    }
 
-    res.json(nannies);
+    // ======================
+    // AVAILABILITY FILTER
+    // ======================
+    if (availability) {
+      filter.availability = availability;
+    }
+
+    // ======================
+    // PAGINATION
+    // ======================
+    const skip = (page - 1) * limit;
+
+    const providers = await User.find(filter)
+      .select("-password")
+      .skip(skip)
+      .limit(Number(limit))
+      .sort({ createdAt: -1 });
+
+    const total = await User.countDocuments(filter);
+
+    // ======================
+    // RESPONSE
+    // ======================
+    res.json({
+      data: providers,
+      pagination: {
+        total,
+        page: Number(page),
+        pages: Math.ceil(total / limit),
+      },
+    });
+
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    res.status(500).json({
+      message: error.message,
+    });
   }
 };

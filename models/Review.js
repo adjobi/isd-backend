@@ -2,29 +2,23 @@ const mongoose = require("mongoose");
 
 const reviewSchema = new mongoose.Schema(
   {
-    familyId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-
     nannyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Nanny",
       required: true,
     },
 
-    bookingId: {
+    userId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "Booking",
+      ref: "User",
       required: true,
     },
 
     rating: {
       type: Number,
+      required: true,
       min: 1,
       max: 5,
-      required: true,
     },
 
     comment: {

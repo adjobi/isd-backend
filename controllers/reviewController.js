@@ -1,48 +1,101 @@
 const Review = require("../models/Review");
 const Nanny = require("../models/Nanny");
+const mongoose = require("mongoose");
 
-// CREATE review
+/* =========================
+   ⭐ CREATE REVIEW
+========================= */
 exports.createReview = async (req, res) => {
   try {
-    const familyId = req.user.id;
-    const { nannyId, bookingId, rating, comment } = req.body;
+    const userId = req.user.id;
+    const { nannyId, rating, comment } = req.body;
+
+    // validation rating
+    if (rating < 1 || rating > 5) {
+      return res.status(400).json({
+        message: "Rating doit être entre 1 et 5",
+      });
+    }
+
+    const nanny = await Nanny.findById(nannyId);
+
+    if (!nanny) {
+      return res.status(404).json({ message: "Nounou introuvable" });
+    }
 
     const review = await Review.create({
-      familyId,
       nannyId,
-      bookingId,
+      userId,
       rating,
       comment,
     });
 
-    // recalcul rating nanny
-    const reviews = await Review.find({ nannyId });
-
-    const avgRating =
-      reviews.reduce((acc, r) => acc + r.rating, 0) / reviews.length;
-
-    await Nanny.findByIdAndUpdate(nannyId, {
-      rating: avgRating,
-      reviewsCount: reviews.length,
-    });
-
     res.status(201).json({
-      message: "Avis ajouté",
+      message: "Avis ajouté avec succès",
       review,
     });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// GET reviews d'une nounou
-exports.getNannyReviews = async (req, res) => {
+/* =========================
+   📊 GET REVIEWS BY NANNY
+========================= */
+exports.getReviewsByNanny = async (req, res) => {
   try {
     const reviews = await Review.find({ nannyId: req.params.id })
-      .populate("familyId", "name")
+      .populate("userId", "name email")
       .sort({ createdAt: -1 });
 
     res.json(reviews);
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* =========================
+   👤 GET REVIEWS BY USER
+========================= */
+exports.getReviewsByUser = async (req, res) => {
+  try {
+    const reviews = await Review.find({ userId: req.params.id })
+      .populate("nannyId", "name pricePerHour location")
+      .sort({ createdAt: -1 });
+
+    res.json(reviews);
+
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+/* =========================
+   📈 GET AVERAGE RATING
+========================= */
+exports.getAverageRating = async (req, res) => {
+  try {
+    const nannyId = req.params.id;
+
+    const reviews = await Review.find({ nannyId });
+
+    if (reviews.length === 0) {
+      return res.json({
+        average: 0,
+        count: 0,
+      });
+    }
+
+    const sum = reviews.reduce((acc, review) => acc + review.rating, 0);
+    const average = sum / reviews.length;
+
+    res.json({
+      average: Number(average.toFixed(1)),
+      count: reviews.length,
+    });
+
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

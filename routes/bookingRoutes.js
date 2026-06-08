@@ -4,16 +4,20 @@ const router = express.Router();
 const bookingController = require("../controllers/bookingController");
 const authMiddleware = require("../middleware/authMiddleware");
 
-// créer réservation
+// CREATE
 router.post("/", authMiddleware, bookingController.createBooking);
 
-// mes réservations (famille)
-router.get("/me", authMiddleware, bookingController.getMyBookings);
+// FAMILY
+router.get("/family", authMiddleware, bookingController.getFamilyBookings);
 
-// réservations d'une nounou
-router.get("/nanny/:id", authMiddleware, bookingController.getNannyBookings);
+// PROVIDER
+router.get("/provider", authMiddleware, bookingController.getProviderBookings);
 
-// update status
-router.put("/:id", authMiddleware, bookingController.updateBookingStatus);
+// ACTION
+router.put("/:id/action", authMiddleware, bookingController.providerAction);
+
+// FLOW
+router.put("/:id/start", authMiddleware, bookingController.startService);
+router.put("/:id/complete", authMiddleware, bookingController.completeService);
 
 module.exports = router;

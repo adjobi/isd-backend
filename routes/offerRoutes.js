@@ -61,6 +61,40 @@ router.get("/available", auth, async (req, res) => {
 });
 
 // ================================
+// MES CANDIDATURES (prestataire)
+// Toutes les offres où j'ai candidaté
+// peu importe le statut de l'offre
+// ================================
+router.get("/my-applications", auth, async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (role === "family") {
+      return res.status(403).json({ message: "Réservé aux prestataires" });
+    }
+    const offers = await Offer.find({
+      "applications.provider": req.user.id,
+    })
+      .populate("family", "firstName lastName city phone")
+      .sort({ createdAt: -1 });
+
+    // Ajouter le statut de MA candidature dans chaque offre
+    const result = offers.map((offer) => {
+      const myApp = offer.applications.find(
+        (a) => a.provider.toString() === req.user.id
+      );
+      return {
+        ...offer.toObject(),
+        myApplication: myApp,
+      };
+    });
+
+    return res.json(result);
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ================================
 // MODIFIER UNE OFFRE (famille)
 // ================================
 router.put("/:id", auth, async (req, res) => {

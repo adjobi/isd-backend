@@ -220,7 +220,7 @@ router.post("/message/:offerId", auth, async (req, res) => {
           message: `🎉 Accord confirmé entre les deux parties !
 
 💼 Récapitulatif de la collaboration :
-• Service : ${provider?.serviceType === "nanny" ? "Garde d'enfants (Nounou)" : "Cours particuliers (Répétiteur)"}
+• Service : ${(provider?.serviceType || provider?.role) === "nanny" ? "Garde d'enfants (Nounou)" : "Cours particuliers (Répétiteur)"}
 • Prestataire : ${provider?.firstName} ${provider?.lastName}
 • Montant mensuel : ${invoiceAmount} FCFA
 
@@ -313,7 +313,7 @@ router.post("/confirm-payment/:offerId", auth, async (req, res) => {
 • Téléphone : ${family?.phone}
 • Commune : ${family?.city}
 
-${provider?.serviceType === "nanny" ? "👩‍🍼 Nounou" : "📚 Répétiteur"} :
+${(provider?.serviceType || provider?.role) === "nanny" ? "👩‍🍼 Nounou" : "📚 Répétiteur"} :
 • Nom : ${provider?.firstName} ${provider?.lastName}
 • Téléphone : ${provider?.phone}
 • Commune : ${provider?.city}

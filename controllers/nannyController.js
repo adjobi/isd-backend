@@ -1,67 +1,41 @@
 const User = require("../models/User");
 
-// ===============================
-// GET NANNIES / TUTORS MARKETPLACE
-// ===============================
 exports.getNannies = async (req, res) => {
   try {
-    const {
-      city,
-      minPrice,
-      maxPrice,
-      type,
-      subject,
-      availability,
-      page = 1,
-      limit = 20,
-    } = req.query;
+    const { city, minPrice, maxPrice, type, subject, availability, page = 1, limit = 20 } = req.query;
 
     let filter = {
       role: { $in: ["nanny", "tutor"] },
     };
 
-    // ======================
-    // CITY (CASE INSENSITIVE)
-    // ======================
+    // TYPE FILTER — cherche dans role ET serviceType
+    if (type) {
+      filter.role = type; // nanny ou tutor
+    }
+
+    // CITY
     if (city) {
       filter.city = { $regex: city, $options: "i" };
     }
 
-    // ======================
-    // TYPE FILTER
-    // ======================
-    if (type) {
-      filter.serviceType = type;
-    }
-
-    // ======================
-    // PRICE RANGE
-    // ======================
+    // PRICE
     if (minPrice || maxPrice) {
       filter.pricingAmount = {};
       if (minPrice) filter.pricingAmount.$gte = Number(minPrice);
       if (maxPrice) filter.pricingAmount.$lte = Number(maxPrice);
     }
 
-    // ======================
-    // SUBJECT FILTER (TUTOR ONLY)
-    // ======================
-    if (subject && type === "tutor") {
+    // SUBJECT (tutor only)
+    if (subject) {
       filter.subjects = { $in: [subject] };
     }
 
-    // ======================
-    // AVAILABILITY FILTER
-    // ======================
+    // AVAILABILITY
     if (availability) {
       filter.availability = availability;
     }
 
-    // ======================
-    // PAGINATION
-    // ======================
     const skip = (page - 1) * limit;
-
     const providers = await User.find(filter)
       .select("-password")
       .skip(skip)
@@ -70,21 +44,8 @@ exports.getNannies = async (req, res) => {
 
     const total = await User.countDocuments(filter);
 
-    // ======================
-    // RESPONSE
-    // ======================
-    res.json({
-      data: providers,
-      pagination: {
-        total,
-        page: Number(page),
-        pages: Math.ceil(total / limit),
-      },
-    });
-
+    res.json(providers); // ✅ retourne directement le tableau
   } catch (error) {
-    res.status(500).json({
-      message: error.message,
-    });
+    res.status(500).json({ message: error.message });
   }
 };

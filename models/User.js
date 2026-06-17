@@ -1,116 +1,43 @@
 const mongoose = require("mongoose");
-
 const userSchema = new mongoose.Schema(
   {
     // ======================
     // AUTH
     // ======================
-    role: {
-      type: String,
-      enum: ["family", "nanny", "tutor"],
-      required: true,
-    },
-
-    email: {
-      type: String,
-      unique: true,
-      required: true,
-      lowercase: true,
-      trim: true,
-    },
-
-    password: {
-      type: String,
-      required: true,
-    },
+    role: { type: String, enum: ["family", "nanny", "tutor"], required: true },
+    email: { type: String, unique: true, required: true, lowercase: true, trim: true },
+    password: { type: String, required: true },
 
     // ======================
     // PROFILE COMMON
     // ======================
-    firstName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    lastName: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    phone: {
-      type: String,
-      required: true,
-    },
-
-    city: {
-      type: String,
-      required: true,
-    },
-
-    photo: {
-      type: String,
-      default: "",
-    },
-
-    bio: {
-      type: String,
-      default: "",
-    },
+    firstName: { type: String, required: true, trim: true },
+    lastName: { type: String, required: true, trim: true },
+    phone: { type: String, required: true },
+    city: { type: String, required: true },           // ville
+    commune: { type: String, default: "" },             // ✅ commune d'habitation
+    photo: { type: String, default: "" },                // ✅ photo de profil (base64 ou URL)
+    bio: { type: String, default: "" },                  // description du profil
+    values: { type: [String], default: [] },             // ✅ valeurs (ex: ponctualité, bienveillance)
+    skills: { type: [String], default: [] },              // ✅ compétences (premiers secours, cuisine, etc.)
 
     // ======================
     // PROVIDER DATA (NANNY / TUTOR)
     // ======================
-    serviceType: {
-      type: String,
-      enum: ["nanny", "tutor"],
-    },
-
-    subjects: {
-      type: [String],
-      default: [],
-    },
-
-    pricingType: {
-      type: String,
-      enum: ["hour", "session", "month"],
-    },
-
-    pricingAmount: {
-      type: Number,
-    },
+    serviceType: { type: String, enum: ["nanny", "tutor"] },
+    subjects: { type: [String], default: [] },
+    pricingType: { type: String, enum: ["hour", "session", "month"] },
+    pricingAmount: { type: Number },
 
     // ======================
     // MARKETPLACE STATUS
     // ======================
-    availability: {
-      type: String,
-      enum: ["available", "busy", "away"],
-      default: "available",
-    },
-
-    rating: {
-      type: Number,
-      default: 0,
-    },
-
-    isVerified: {
-      type: Boolean,
-      default: false,
-    },
-
-    isProfileCompleted: {
-      type: Boolean,
-      default: false,
-    },
-
-    lastLogin: {
-      type: Date,
-      default: null,
-    },
+    availability: { type: String, enum: ["available", "busy", "away"], default: "available" },
+    rating: { type: Number, default: 0 },
+    isVerified: { type: Boolean, default: false },
+    isProfileCompleted: { type: Boolean, default: false },
+    lastLogin: { type: Date, default: null },
   },
   { timestamps: true }
 );
-
 module.exports = mongoose.model("User", userSchema);

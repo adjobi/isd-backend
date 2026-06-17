@@ -36,4 +36,27 @@ router.put("/availability", authMiddleware, async (req, res) => {
   }
 });
 
+// ======================
+// METTRE À JOUR LE PROFIL ENRICHI
+// ======================
+router.put("/profile", authMiddleware, async (req, res) => {
+  try {
+    const { bio, commune, photo, values, skills, subjects, pricingAmount } = req.body;
+
+    const updates = {};
+    if (bio !== undefined) updates.bio = bio;
+    if (commune !== undefined) updates.commune = commune;
+    if (photo !== undefined) updates.photo = photo;
+    if (values !== undefined) updates.values = values;
+    if (skills !== undefined) updates.skills = skills;
+    if (subjects !== undefined) updates.subjects = subjects;
+    if (pricingAmount !== undefined) updates.pricingAmount = pricingAmount;
+
+    const user = await User.findByIdAndUpdate(req.user.id, updates, { new: true }).select("-password");
+    return res.json({ message: "Profil mis à jour", user });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

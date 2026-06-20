@@ -1,5 +1,4 @@
 const mongoose = require("mongoose");
-
 const notificationSchema = new mongoose.Schema(
   {
     // ======================
@@ -10,7 +9,6 @@ const notificationSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-
     // ======================
     // CONTENT
     // ======================
@@ -18,12 +16,10 @@ const notificationSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-
     message: {
       type: String,
       required: true,
     },
-
     // ======================
     // TYPE SYSTEM
     // ======================
@@ -35,12 +31,12 @@ const notificationSchema = new mongoose.Schema(
         "booking_rejected",
         "booking_started",
         "booking_completed",
+        "booking_cancelled",
         "chat_message",
         "system_alert",
       ],
       required: true,
     },
-
     // ======================
     // STATUS
     // ======================
@@ -48,7 +44,6 @@ const notificationSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-
     // ======================
     // RELATIONS
     // ======================
@@ -56,7 +51,6 @@ const notificationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Booking",
     },
-
     // ======================
     // REAL-TIME SYSTEM SUPPORT
     // ======================
@@ -65,13 +59,11 @@ const notificationSchema = new mongoose.Schema(
       enum: ["socket", "push", "inapp"],
       default: "inapp",
     },
-
     priority: {
       type: String,
       enum: ["low", "normal", "high", "urgent"],
       default: "normal",
     },
-
     metadata: {
       type: Object,
       default: {},
@@ -79,5 +71,4 @@ const notificationSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
 module.exports = mongoose.model("Notification", notificationSchema);

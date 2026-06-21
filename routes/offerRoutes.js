@@ -17,7 +17,9 @@ router.post("/", auth, async (req, res) => {
     }
     const offer = await Offer.create({
       family: req.user.id,
-      serviceType, description, duration,
+      serviceType,
+      description,
+      duration,
       price: price || 0,
       subjects: subjects || [],
       city,
@@ -44,121 +46,21 @@ router.get("/my", auth, async (req, res) => {
 
 // ================================
 // OFFRES DISPONIBLES (prestataires)
+// Filtre par serviceType du prestataire
 // ================================
 router.get("/available", auth, async (req, res) => {
   try {
-    const role = req.user.role;
-    if (role === "family") {
-      return res.status(403).json({ message: "Réservé aux prestataires" });
-    }
-    const offers = await Offer.find({ serviceType: role, status: "open" })
-      .populate("family", "firstName lastName city")
-      .sort({ createdAt: -1 });
-    return res.json(offers);
-  } catch (err) {
-    return res.status(500).json({ message: err.message });
-  }
-});
-
-// ================================
-// MES CANDIDATURES (prestataire)
-// Toutes les offres où j'ai candidaté
-// peu importe le statut de l'offre
-// ================================
-router.get("/my-applications", auth, async (req, res) => {
-  try {
-    const role = req.user.role;
+    const role = req.user.role; // nanny ou tutor
     if (role === "family") {
       return res.status(403).json({ message: "Réservé aux prestataires" });
     }
     const offers = await Offer.find({
-      "applications.provider": req.user.id,
+      serviceType: role,
+      status: "open",
     })
-      .populate("family", "firstName lastName city phone")
+      .populate("family", "firstName lastName city")
       .sort({ createdAt: -1 });
-
-    // Ajouter le statut de MA candidature dans chaque offre
-    const result = offers.map((offer) => {
-      const myApp = offer.applications.find(
-        (a) => a.provider.toString() === req.user.id
-      );
-      return {
-        ...offer.toObject(),
-        myApplication: myApp,
-      };
-    });
-
-    return res.json(result);
-  } catch (err) {
-    return res.status(500).json({ message: err.message });
-  }
-});
-
-// ================================
-// MODIFIER UNE OFFRE (famille)
-// ================================
-router.put("/:id", auth, async (req, res) => {
-  try {
-    if (req.user.role !== "family") {
-      return res.status(403).json({ message: "Réservé aux familles" });
-    }
-    const offer = await Offer.findById(req.params.id);
-    if (!offer) return res.status(404).json({ message: "Offre introuvable" });
-    if (offer.family.toString() !== req.user.id) {
-      return res.status(403).json({ message: "Non autorisé" });
-    }
-    if (offer.status === "closed") {
-      return res.status(400).json({ message: "Impossible de modifier une offre fermée" });
-    }
-    const { description, duration, price, subjects, city } = req.body;
-    if (description) offer.description = description;
-    if (duration) offer.duration = duration;
-    if (price !== undefined) offer.price = price;
-    if (subjects) offer.subjects = subjects;
-    if (city) offer.city = city;
-    await offer.save();
-    return res.json({ message: "Offre modifiée", offer });
-  } catch (err) {
-    return res.status(500).json({ message: err.message });
-  }
-});
-
-// ================================
-// ANNULER UNE OFFRE (famille)
-// ================================
-router.put("/:id/cancel", auth, async (req, res) => {
-  try {
-    if (req.user.role !== "family") {
-      return res.status(403).json({ message: "Réservé aux familles" });
-    }
-    const offer = await Offer.findById(req.params.id);
-    if (!offer) return res.status(404).json({ message: "Offre introuvable" });
-    if (offer.family.toString() !== req.user.id) {
-      return res.status(403).json({ message: "Non autorisé" });
-    }
-    offer.status = "closed";
-    await offer.save();
-    return res.json({ message: "Offre annulée" });
-  } catch (err) {
-    return res.status(500).json({ message: err.message });
-  }
-});
-
-// ================================
-// SUPPRIMER UNE OFFRE (famille)
-// ================================
-router.delete("/:id", auth, async (req, res) => {
-  try {
-    if (req.user.role !== "family") {
-      return res.status(403).json({ message: "Réservé aux familles" });
-    }
-    const offer = await Offer.findById(req.params.id);
-    if (!offer) return res.status(404).json({ message: "Offre introuvable" });
-    if (offer.family.toString() !== req.user.id) {
-      return res.status(403).json({ message: "Non autorisé" });
-    }
-    await offer.deleteOne();
-    return res.json({ message: "Offre supprimée" });
+    return res.json(offers);
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -178,6 +80,7 @@ router.post("/:id/apply", auth, async (req, res) => {
     if (offer.status === "closed") {
       return res.status(400).json({ message: "Cette offre est fermée" });
     }
+    // Vérifier si déjà candidaté
     const already = offer.applications.find(
       (a) => a.provider.toString() === req.user.id
     );
@@ -206,13 +109,19 @@ router.post("/:offerId/accept/:providerId", auth, async (req, res) => {
     if (offer.family.toString() !== req.user.id) {
       return res.status(403).json({ message: "Non autorisé" });
     }
+
+    // Accepter le candidat choisi, refuser tous les autres
     offer.applications = offer.applications.map((a) => ({
       ...a.toObject(),
-      status: a.provider.toString() === req.params.providerId ? "accepted" : "rejected",
+      status:
+        a.provider.toString() === req.params.providerId ? "accepted" : "rejected",
     }));
+
+    // Fermer l'offre
     offer.status = "closed";
     await offer.save();
-    return res.json({ message: "Candidature acceptée", offer });
+
+    return res.json({ message: "Candidature acceptée, offre fermée", offer });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -228,12 +137,15 @@ router.post("/:offerId/reject/:providerId", auth, async (req, res) => {
     }
     const offer = await Offer.findById(req.params.offerId);
     if (!offer) return res.status(404).json({ message: "Offre introuvable" });
+
     const app = offer.applications.find(
       (a) => a.provider.toString() === req.params.providerId
     );
     if (!app) return res.status(404).json({ message: "Candidature introuvable" });
+
     app.status = "rejected";
     await offer.save();
+
     return res.json({ message: "Candidature refusée" });
   } catch (err) {
     return res.status(500).json({ message: err.message });

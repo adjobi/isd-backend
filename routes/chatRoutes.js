@@ -4,6 +4,18 @@ const auth = require("../middleware/authMiddleware");
 const { ChatMessage, ChatSession } = require("../models/Chat");
 const Offer = require("../models/Offer");
 const User = require("../models/User");
+const Notification = require("../models/Notification");
+
+// ================================
+// CONFIG ISD
+// ================================
+const ISD_MOBILE_MONEY_NUMBER = "+225 07 09 10 25 24";
+const ISD_COMMISSION_RATE = 0.2; // 20% du tarif du prestataire
+
+function computeInvoiceAmount(pricingAmount) {
+  const raw = (pricingAmount || 0) * ISD_COMMISSION_RATE;
+  return Math.round(raw / 100) * 100; // arrondi au multiple de 100 le plus proche
+}
 
 // ================================
 // PATTERNS INFOS SENSIBLES
@@ -79,7 +91,7 @@ router.post("/session/:offerId", auth, async (req, res) => {
         offerId: offer._id,
         familyId,
         providerId,
-        invoiceAmount: acceptedApp.provider.pricingAmount || 0,
+        invoiceAmount: computeInvoiceAmount(acceptedApp.provider.pricingAmount),
       });
 
       // Message de bienvenue du système
@@ -205,9 +217,9 @@ router.post("/message/:offerId", auth, async (req, res) => {
         session.status = "agreement_reached";
         await session.save();
 
-        // Récupérer le prestataire pour calculer la facture
+        // Récupérer le prestataire pour calculer la facture (20% de son tarif, arrondi au multiple de 100)
         const provider = await User.findById(session.providerId);
-        const invoiceAmount = provider?.pricingAmount || 0;
+        const invoiceAmount = computeInvoiceAmount(provider?.pricingAmount);
         session.invoiceAmount = invoiceAmount;
         session.status = "invoice_sent";
         await session.save();
@@ -222,19 +234,28 @@ router.post("/message/:offerId", auth, async (req, res) => {
 💼 Récapitulatif de la collaboration :
 • Service : ${(provider?.serviceType || provider?.role) === "nanny" ? "Garde d'enfants (Nounou)" : "Cours particuliers (Répétiteur)"}
 • Prestataire : ${provider?.firstName} ${provider?.lastName}
-• Montant mensuel : ${invoiceAmount} FCFA
+• Tarif prestataire : ${provider?.pricingAmount || 0} FCFA
 
-💳 Facture ISD Services
+💳 Facture ISD Services (commission 20%)
 Pour finaliser la mise en relation, veuillez régler la commission ISD :
 
 Montant : ${invoiceAmount} FCFA
 Mode de paiement : Mobile Money
-Numéro ISD : +225 XX XX XX XX XX
+Numéro ISD : ${ISD_MOBILE_MONEY_NUMBER}
 
 📲 Une fois le paiement effectué, les coordonnées complètes des deux parties vous seront communiquées automatiquement.
 
 Référence : ISD-${req.params.offerId.toString().slice(-6).toUpperCase()}`,
           type: "invoice",
+        });
+
+        // Notifier la famille (c'est elle qui doit payer)
+        await Notification.create({
+          userId: session.familyId,
+          title: "Facture ISD disponible",
+          message: `Un accord a été trouvé. Merci de régler ${invoiceAmount} FCFA via Mobile Money (${ISD_MOBILE_MONEY_NUMBER}) pour débloquer les coordonnées.`,
+          type: "system_alert",
+          metadata: { offerId: req.params.offerId, invoiceAmount },
         });
 
         const io = req.app.get("io");
@@ -321,8 +342,26 @@ ${(provider?.serviceType || provider?.role) === "nanny" ? "👩‍🍼 Nounou" :
 📅 Date de début de collaboration : ${startDateStr}
 
 🎉 ISD Services vous souhaite une excellente collaboration !
-Pour toute assistance, contactez-nous.`,
+Pour toute assistance, contactez-nous.
+
+ℹ️ Vous pourrez rompre cette collaboration à tout moment depuis votre espace "Mes réservations" si besoin.`,
       type: "info_reveal",
+    });
+
+    // Notifier les deux parties que les contacts sont révélés
+    await Notification.create({
+      userId: session.familyId,
+      title: "Coordonnées débloquées",
+      message: "Le paiement est confirmé. Les coordonnées du prestataire sont disponibles dans votre chat.",
+      type: "system_alert",
+      metadata: { offerId: req.params.offerId },
+    });
+    await Notification.create({
+      userId: session.providerId,
+      title: "Coordonnées débloquées",
+      message: "Le paiement de la famille est confirmé. Vos coordonnées mutuelles sont disponibles dans votre chat.",
+      type: "system_alert",
+      metadata: { offerId: req.params.offerId },
     });
 
     const io = req.app.get("io");
@@ -332,6 +371,62 @@ Pour toute assistance, contactez-nous.`,
     }
 
     return res.json({ message: "Paiement confirmé, infos révélées", revealMsg });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ================================
+// ROMPRE LA COLLABORATION (après accord/paiement)
+// Accessible à la famille ou au prestataire
+// ================================
+router.post("/end-collaboration/:offerId", auth, async (req, res) => {
+  try {
+    const session = await ChatSession.findOne({ offerId: req.params.offerId });
+    if (!session) return res.status(404).json({ message: "Session introuvable" });
+
+    const userId = req.user.id;
+    const isFamily = userId === session.familyId.toString();
+    const isProvider = userId === session.providerId.toString();
+
+    if (!isFamily && !isProvider) {
+      return res.status(403).json({ message: "Non autorisé" });
+    }
+
+    if (session.status === "closed") {
+      return res.status(400).json({ message: "Cette collaboration est déjà terminée" });
+    }
+
+    session.status = "closed";
+    await session.save();
+
+    const initiatorLabel = isFamily ? "la famille" : "le prestataire";
+    const otherPartyId = isFamily ? session.providerId : session.familyId;
+
+    const endMsg = await ChatMessage.create({
+      offerId: req.params.offerId,
+      familyId: session.familyId,
+      providerId: session.providerId,
+      senderRole: "system",
+      message: `🔚 ${initiatorLabel.charAt(0).toUpperCase() + initiatorLabel.slice(1)} a mis fin à cette collaboration. Ce chat est désormais clos.`,
+      type: "system",
+    });
+
+    await Notification.create({
+      userId: otherPartyId,
+      title: "Collaboration terminée",
+      message: `${initiatorLabel.charAt(0).toUpperCase() + initiatorLabel.slice(1)} a mis fin à votre collaboration.`,
+      type: "system_alert",
+      metadata: { offerId: req.params.offerId },
+    });
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`chat_${req.params.offerId}`).emit("new_message", endMsg);
+      io.to(`chat_${req.params.offerId}`).emit("collaboration_ended", { session });
+    }
+
+    return res.json({ message: "Collaboration terminée", session });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }

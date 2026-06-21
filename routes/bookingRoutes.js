@@ -8,6 +8,8 @@ router.post("/", authMiddleware, bookingController.createBooking);
 router.get("/family", authMiddleware, bookingController.getFamilyBookings);
 // PROVIDER
 router.get("/provider", authMiddleware, bookingController.getProviderBookings);
+// MISSIONS TERMINÉES (pour le profil enrichi)
+router.get("/completed-missions", authMiddleware, bookingController.getCompletedMissions);
 // ACTION
 router.put("/:id/action", authMiddleware, bookingController.providerAction);
 // FLOW

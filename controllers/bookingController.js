@@ -85,6 +85,25 @@ exports.getProviderBookings = async (req, res) => {
 };
 
 // ======================
+// MISSIONS TERMINÉES (prestataire)
+// Pour affichage dans le profil enrichi
+// ======================
+exports.getCompletedMissions = async (req, res) => {
+  try {
+    const missions = await Booking.find({
+      providerId: req.user.id,
+      status: "completed",
+    })
+      .populate("familyId", "firstName lastName city")
+      .sort({ updatedAt: -1 });
+
+    res.json(missions);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ======================
 // PROVIDER ACTION (ACCEPT / REJECT)
 // ======================
 exports.providerAction = async (req, res) => {

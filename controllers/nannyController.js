@@ -4,18 +4,20 @@ exports.getNannies = async (req, res) => {
   try {
     const { city, minPrice, maxPrice, type, subject, availability, page = 1, limit = 20 } = req.query;
 
+    // La recherche par ville est obligatoire : on ne liste jamais
+    // tous les prestataires sans qu'une famille ait précisé une ville.
+    if (!city || !city.trim()) {
+      return res.status(400).json({ message: "Veuillez indiquer une ville pour lancer la recherche" });
+    }
+
     let filter = {
       role: { $in: ["nanny", "tutor"] },
+      city: { $regex: city.trim(), $options: "i" },
     };
 
     // TYPE FILTER — cherche dans role ET serviceType
     if (type) {
       filter.role = type; // nanny ou tutor
-    }
-
-    // CITY
-    if (city) {
-      filter.city = { $regex: city, $options: "i" };
     }
 
     // PRICE
@@ -41,8 +43,6 @@ exports.getNannies = async (req, res) => {
       .skip(skip)
       .limit(Number(limit))
       .sort({ createdAt: -1 });
-
-    const total = await User.countDocuments(filter);
 
     res.json(providers); // ✅ retourne directement le tableau
   } catch (error) {

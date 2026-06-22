@@ -8,6 +8,13 @@ const offerSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    // Si renseigné : offre privée/directe visible uniquement par ce prestataire.
+    // Si absent : offre publique, visible par tous les prestataires du bon serviceType.
+    targetProvider: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     // Type de service recherché
     serviceType: {
       type: String,

@@ -6,23 +6,46 @@ const Notification = require("../models/Notification");
 
 // ================================
 // CRÉER UNE OFFRE (famille only)
+// Si targetProvider est fourni : offre privée/directe,
+// avec candidature automatique du prestataire ciblé.
 // ================================
 router.post("/", auth, async (req, res) => {
   try {
     if (req.user.role !== "family") {
       return res.status(403).json({ message: "Réservé aux familles" });
     }
-    const { serviceType, description, duration, price, subjects, city } = req.body;
+    const { serviceType, description, duration, price, subjects, city, targetProvider } = req.body;
     if (!serviceType || !description || !duration || !city) {
       return res.status(400).json({ message: "Champs obligatoires manquants" });
     }
-    const offer = await Offer.create({
+
+    const offerData = {
       family: req.user.id,
       serviceType, description, duration,
       price: price || 0,
       subjects: subjects || [],
       city,
-    });
+    };
+
+    if (targetProvider) {
+      offerData.targetProvider = targetProvider;
+      // Offre directe : le prestataire ciblé est automatiquement "candidat"
+      // pour que le flux d'acceptation existant (accept/:offerId/:providerId) fonctionne sans changement.
+      offerData.applications = [{ provider: targetProvider, status: "pending" }];
+    }
+
+    const offer = await Offer.create(offerData);
+
+    if (targetProvider) {
+      await Notification.create({
+        userId: targetProvider,
+        title: "Nouvelle proposition directe",
+        message: "Une famille vous propose directement une collaboration. Consultez l'offre pour accepter ou refuser.",
+        type: "booking_request",
+        metadata: { offerId: offer._id },
+      });
+    }
+
     return res.status(201).json({ message: "Offre créée", offer });
   } catch (err) {
     return res.status(500).json({ message: err.message });
@@ -45,6 +68,8 @@ router.get("/my", auth, async (req, res) => {
 
 // ================================
 // OFFRES DISPONIBLES (prestataires)
+// Inclut : les offres publiques ouvertes (targetProvider absent)
+// + les offres privées ciblant CE prestataire précis
 // ================================
 router.get("/available", auth, async (req, res) => {
   try {
@@ -52,7 +77,14 @@ router.get("/available", auth, async (req, res) => {
     if (role === "family") {
       return res.status(403).json({ message: "Réservé aux prestataires" });
     }
-    const offers = await Offer.find({ serviceType: role, status: "open" })
+    const offers = await Offer.find({
+      serviceType: role,
+      status: "open",
+      $or: [
+        { targetProvider: null },
+        { targetProvider: req.user.id },
+      ],
+    })
       .populate("family", "firstName lastName city")
       .sort({ createdAt: -1 });
     return res.json(offers);
@@ -63,7 +95,7 @@ router.get("/available", auth, async (req, res) => {
 
 // ================================
 // MES CANDIDATURES (prestataire)
-// Toutes les offres où j'ai candidaté
+// Toutes les offres où j'ai candidaté (ou été ciblé directement)
 // peu importe le statut de l'offre
 // ================================
 router.get("/my-applications", auth, async (req, res) => {
@@ -86,6 +118,7 @@ router.get("/my-applications", auth, async (req, res) => {
       return {
         ...offer.toObject(),
         myApplication: myApp,
+        isDirectOffer: !!offer.targetProvider,
       };
     });
 
@@ -167,6 +200,7 @@ router.delete("/:id", auth, async (req, res) => {
 
 // ================================
 // CANDIDATER À UNE OFFRE (prestataire)
+// Bloqué si l'offre est une offre directe ciblant un AUTRE prestataire
 // ================================
 router.post("/:id/apply", auth, async (req, res) => {
   try {
@@ -178,6 +212,9 @@ router.post("/:id/apply", auth, async (req, res) => {
     if (!offer) return res.status(404).json({ message: "Offre introuvable" });
     if (offer.status === "closed") {
       return res.status(400).json({ message: "Cette offre est fermée" });
+    }
+    if (offer.targetProvider && offer.targetProvider.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Cette offre est réservée à un autre prestataire" });
     }
     const already = offer.applications.find(
       (a) => a.provider.toString() === req.user.id
@@ -198,6 +235,38 @@ router.post("/:id/apply", auth, async (req, res) => {
     });
 
     return res.json({ message: "Candidature envoyée" });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ================================
+// REFUSER UNE OFFRE DIRECTE (prestataire)
+// Le prestataire ciblé peut refuser une proposition directe
+// ================================
+router.post("/:id/decline", auth, async (req, res) => {
+  try {
+    const offer = await Offer.findById(req.params.id);
+    if (!offer) return res.status(404).json({ message: "Offre introuvable" });
+    if (!offer.targetProvider || offer.targetProvider.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Non autorisé" });
+    }
+    const app = offer.applications.find(
+      (a) => a.provider.toString() === req.user.id
+    );
+    if (app) app.status = "rejected";
+    offer.status = "closed";
+    await offer.save();
+
+    await Notification.create({
+      userId: offer.family,
+      title: "Proposition refusée",
+      message: "Le prestataire a décliné votre proposition directe.",
+      type: "booking_rejected",
+      metadata: { offerId: offer._id },
+    });
+
+    return res.json({ message: "Proposition refusée" });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }

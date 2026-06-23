@@ -199,8 +199,12 @@ router.delete("/:id", auth, async (req, res) => {
 });
 
 // ================================
-// CANDIDATER À UNE OFFRE (prestataire)
-// Bloqué si l'offre est une offre directe ciblant un AUTRE prestataire
+// CANDIDATER / ACCEPTER UNE OFFRE (prestataire)
+//
+// - Offre PUBLIQUE : crée une nouvelle candidature (comportement inchangé).
+// - Offre DIRECTE (targetProvider) : une candidature "pending" existe déjà
+//   automatiquement depuis la création. Ici, le prestataire confirme son
+//   intérêt -> on notifie la famille pour qu'elle valide via /accept.
 // ================================
 router.post("/:id/apply", auth, async (req, res) => {
   try {
@@ -216,12 +220,30 @@ router.post("/:id/apply", auth, async (req, res) => {
     if (offer.targetProvider && offer.targetProvider.toString() !== req.user.id) {
       return res.status(403).json({ message: "Cette offre est réservée à un autre prestataire" });
     }
+
     const already = offer.applications.find(
       (a) => a.provider.toString() === req.user.id
     );
+
+    const isDirectOffer = !!offer.targetProvider;
+
     if (already) {
+      // Cas attendu pour une offre directe : la candidature existe déjà
+      // automatiquement depuis la création. On confirme l'intérêt du
+      // prestataire et on notifie la famille, sans renvoyer d'erreur.
+      if (isDirectOffer && already.status === "pending") {
+        await Notification.create({
+          userId: offer.family,
+          title: "Prestataire intéressé",
+          message: "Le prestataire confirme son intérêt pour votre proposition directe. Validez sa candidature pour ouvrir le chat.",
+          type: "booking_request",
+          metadata: { offerId: offer._id },
+        });
+        return res.json({ message: "Intérêt confirmé, la famille va valider votre candidature" });
+      }
       return res.status(400).json({ message: "Vous avez déjà candidaté" });
     }
+
     offer.applications.push({ provider: req.user.id });
     await offer.save();
 

@@ -5,6 +5,7 @@ const { ChatMessage, ChatSession } = require("../models/Chat");
 const Offer = require("../models/Offer");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
+const Booking = require("../models/Booking");
 
 // ================================
 // CONFIG ISD
@@ -303,7 +304,7 @@ Référence : ISD-${req.params.offerId.toString().slice(-6).toUpperCase()}`,
 
 // ================================
 // CONFIRMER PAIEMENT (admin/système)
-// Révèle les infos de contact
+// Révèle les infos de contact + crée le Booking lié
 // ================================
 router.post("/confirm-payment/:offerId", auth, async (req, res) => {
   try {
@@ -312,11 +313,32 @@ router.post("/confirm-payment/:offerId", auth, async (req, res) => {
 
     const family = await User.findById(session.familyId);
     const provider = await User.findById(session.providerId);
+    const offer = await Offer.findById(req.params.offerId);
 
     session.isPaid = true;
     session.status = "paid";
     session.infoRevealed = true;
     await session.save();
+
+    // Créer le Booking correspondant, pour qu'il apparaisse dans
+    // "Mes réservations" des deux côtés (famille et prestataire).
+    let booking = await Booking.findOne({ offerId: req.params.offerId });
+    if (!booking) {
+      booking = await Booking.create({
+        familyId: session.familyId,
+        providerId: session.providerId,
+        offerId: req.params.offerId,
+        serviceType: offer?.serviceType || provider?.serviceType || provider?.role,
+        subject: offer?.subjects?.length ? offer.subjects.join(", ") : undefined,
+        description: offer?.description || "Collaboration via offre ISD",
+        city: offer?.city || family?.city || provider?.city || "",
+        price: provider?.pricingAmount || offer?.price || 0,
+        status: "active",
+        startDate: session.startDate || null,
+        chatEnabled: true,
+        isPaid: true,
+      });
+    }
 
     const startDateStr = session.startDate
       ? new Date(session.startDate).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })
@@ -354,23 +376,23 @@ Pour toute assistance, contactez-nous.
       title: "Coordonnées débloquées",
       message: "Le paiement est confirmé. Les coordonnées du prestataire sont disponibles dans votre chat.",
       type: "system_alert",
-      metadata: { offerId: req.params.offerId },
+      metadata: { offerId: req.params.offerId, bookingId: booking._id },
     });
     await Notification.create({
       userId: session.providerId,
       title: "Coordonnées débloquées",
       message: "Le paiement de la famille est confirmé. Vos coordonnées mutuelles sont disponibles dans votre chat.",
       type: "system_alert",
-      metadata: { offerId: req.params.offerId },
+      metadata: { offerId: req.params.offerId, bookingId: booking._id },
     });
 
     const io = req.app.get("io");
     if (io) {
       io.to(`chat_${req.params.offerId}`).emit("new_message", revealMsg);
-      io.to(`chat_${req.params.offerId}`).emit("payment_confirmed", { family, provider });
+      io.to(`chat_${req.params.offerId}`).emit("payment_confirmed", { family, provider, booking });
     }
 
-    return res.json({ message: "Paiement confirmé, infos révélées", revealMsg });
+    return res.json({ message: "Paiement confirmé, infos révélées", revealMsg, booking });
   } catch (err) {
     return res.status(500).json({ message: err.message });
   }
@@ -379,6 +401,7 @@ Pour toute assistance, contactez-nous.
 // ================================
 // ROMPRE LA COLLABORATION (après accord/paiement)
 // Accessible à la famille ou au prestataire
+// Synchronise aussi le Booking lié, s'il existe
 // ================================
 router.post("/end-collaboration/:offerId", auth, async (req, res) => {
   try {
@@ -399,6 +422,13 @@ router.post("/end-collaboration/:offerId", auth, async (req, res) => {
 
     session.status = "closed";
     await session.save();
+
+    // Synchroniser le Booking lié, s'il existe
+    const booking = await Booking.findOne({ offerId: req.params.offerId });
+    if (booking && !["completed", "cancelled"].includes(booking.status)) {
+      booking.status = "cancelled";
+      await booking.save();
+    }
 
     const initiatorLabel = isFamily ? "la famille" : "le prestataire";
     const otherPartyId = isFamily ? session.providerId : session.familyId;

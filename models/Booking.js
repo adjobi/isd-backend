@@ -1,5 +1,4 @@
 const mongoose = require("mongoose");
-
 const bookingSchema = new mongoose.Schema(
   {
     // ======================
@@ -10,13 +9,18 @@ const bookingSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
-
     providerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
-
+    // Lien vers l'offre/chat d'origine, si ce booking a été créé
+    // automatiquement suite à un accord + paiement dans le système Offer/Chat.
+    offerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Offer",
+      default: null,
+    },
     // ======================
     // SERVICE INFO
     // ======================
@@ -25,21 +29,17 @@ const bookingSchema = new mongoose.Schema(
       enum: ["nanny", "tutor"],
       required: true,
     },
-
     subject: {
       type: String, // tutor only
     },
-
     description: {
       type: String,
       default: "",
     },
-
     city: {
       type: String,
       required: true,
     },
-
     // ======================
     // PRICING SNAPSHOT (IMPORTANT)
     // ======================
@@ -47,12 +47,10 @@ const bookingSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
-
     pricingType: {
       type: String,
       enum: ["hour", "session", "month"],
     },
-
     // ======================
     // STATUS WORKFLOW
     // ======================
@@ -69,22 +67,18 @@ const bookingSchema = new mongoose.Schema(
       ],
       default: "pending",
     },
-
     // ======================
     // NEGOTIATION
     // ======================
     proposedDate: {
       type: Date,
     },
-
     startDate: {
       type: Date,
     },
-
     endDate: {
       type: Date,
     },
-
     // ======================
     // CHAT / SYSTEM TRIGGER
     // ======================
@@ -92,7 +86,6 @@ const bookingSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-
     isPaid: {
       type: Boolean,
       default: false,
@@ -100,5 +93,4 @@ const bookingSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
 module.exports = mongoose.model("Booking", bookingSchema);

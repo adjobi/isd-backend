@@ -122,14 +122,21 @@ exports.providerAction = async (req, res) => {
 
 // ======================
 // START SERVICE
+// Enregistre automatiquement la date de début de mission (une seule fois).
 // ======================
 exports.startService = async (req, res) => {
   try {
-    const booking = await Booking.findByIdAndUpdate(
-      req.params.id,
-      { status: "active" },
-      { new: true }
-    );
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: "Réservation introuvable" });
+    }
+
+    booking.status = "active";
+    if (!booking.startDate) {
+      booking.startDate = new Date();
+    }
+    await booking.save();
+
     res.json(booking);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -138,14 +145,25 @@ exports.startService = async (req, res) => {
 
 // ======================
 // COMPLETE SERVICE
+// Enregistre automatiquement la date de fin de mission.
+// Sécurité : si startDate n'avait jamais été posée (mission jamais "démarrée"
+// explicitement), on la fixe aussi à la date de fin pour garder une période cohérente.
 // ======================
 exports.completeService = async (req, res) => {
   try {
-    const booking = await Booking.findByIdAndUpdate(
-      req.params.id,
-      { status: "completed" },
-      { new: true }
-    );
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: "Réservation introuvable" });
+    }
+
+    const now = new Date();
+    booking.status = "completed";
+    booking.endDate = now;
+    if (!booking.startDate) {
+      booking.startDate = now;
+    }
+    await booking.save();
+
     res.json(booking);
   } catch (error) {
     res.status(500).json({ message: error.message });

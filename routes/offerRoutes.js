@@ -263,6 +263,44 @@ router.post("/:id/apply", auth, async (req, res) => {
 });
 
 // ================================
+// RETIRER MA CANDIDATURE (prestataire)
+// Possible uniquement si elle n'a pas encore été acceptée par la famille
+// (une candidature acceptée correspond à une collaboration en cours,
+// qui se gère via l'annulation de réservation, pas un simple retrait).
+// ================================
+router.delete("/:id/withdraw", auth, async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (role === "family") {
+      return res.status(403).json({ message: "Réservé aux prestataires" });
+    }
+    const offer = await Offer.findById(req.params.id);
+    if (!offer) return res.status(404).json({ message: "Offre introuvable" });
+
+    const appIndex = offer.applications.findIndex(
+      (a) => a.provider.toString() === req.user.id
+    );
+    if (appIndex === -1) {
+      return res.status(404).json({ message: "Candidature introuvable" });
+    }
+
+    const app = offer.applications[appIndex];
+    if (app.status === "accepted") {
+      return res.status(400).json({
+        message: "Impossible de retirer une candidature déjà acceptée. Utilisez plutôt la rupture de collaboration.",
+      });
+    }
+
+    offer.applications.splice(appIndex, 1);
+    await offer.save();
+
+    return res.json({ message: "Candidature retirée" });
+  } catch (err) {
+    return res.status(500).json({ message: err.message });
+  }
+});
+
+// ================================
 // REFUSER UNE OFFRE DIRECTE (prestataire)
 // Le prestataire ciblé peut refuser une proposition directe
 // ================================

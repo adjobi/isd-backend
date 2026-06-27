@@ -90,6 +90,33 @@ const bookingSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // ======================
+    // RETRAIT D'HISTORIQUE (propre à chaque profil)
+    // Permet à la famille ou au prestataire de "supprimer" une réservation
+    // terminée/annulée de SA propre liste, sans affecter l'autre partie
+    // ni casser le lien avec les notations.
+    // ======================
+    familyHidden: {
+      type: Boolean,
+      default: false,
+    },
+    providerHidden: {
+      type: Boolean,
+      default: false,
+    },
+    // ======================
+    // NOTATION MUTUELLE
+    // Indique si chaque partie a déjà soumis sa note pour cette collaboration
+    // (le détail note/commentaire est stocké dans BookingReview).
+    // ======================
+    familyReviewed: {
+      type: Boolean,
+      default: false,
+    },
+    providerReviewed: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

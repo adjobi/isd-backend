@@ -1,5 +1,6 @@
 const Booking = require("../models/Booking");
 const Notification = require("../models/Notification");
+const BookingReview = require("../models/BookingReview");
 
 // ======================
 // HELPER: notifier l'autre partie (DB + socket temps réel)
@@ -58,11 +59,13 @@ exports.createBooking = async (req, res) => {
 
 // ======================
 // FAMILY BOOKINGS
+// Exclut les réservations que la famille a retirées de son historique.
 // ======================
 exports.getFamilyBookings = async (req, res) => {
   try {
     const bookings = await Booking.find({
       familyId: req.user.id,
+      familyHidden: { $ne: true },
     }).populate("providerId");
     res.json(bookings);
   } catch (error) {
@@ -72,11 +75,13 @@ exports.getFamilyBookings = async (req, res) => {
 
 // ======================
 // PROVIDER BOOKINGS
+// Exclut les réservations que le prestataire a retirées de son historique.
 // ======================
 exports.getProviderBookings = async (req, res) => {
   try {
     const bookings = await Booking.find({
       providerId: req.user.id,
+      providerHidden: { $ne: true },
     }).populate("familyId");
     res.json(bookings);
   } catch (error) {
@@ -146,8 +151,6 @@ exports.startService = async (req, res) => {
 // ======================
 // COMPLETE SERVICE
 // Enregistre automatiquement la date de fin de mission.
-// Sécurité : si startDate n'avait jamais été posée (mission jamais "démarrée"
-// explicitement), on la fixe aussi à la date de fin pour garder une période cohérente.
 // ======================
 exports.completeService = async (req, res) => {
   try {
@@ -217,6 +220,115 @@ exports.cancelBooking = async (req, res) => {
       booking,
     });
   } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ======================
+// RETIRER DE L'HISTORIQUE (par profil, sans supprimer pour l'autre partie)
+// Disponible uniquement pour les réservations terminées : completed,
+// cancelled ou rejected (pas pour une mission encore active/en attente).
+// ======================
+exports.hideBooking = async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: "Réservation introuvable" });
+    }
+
+    const userId = String(req.user.id);
+    const isFamily = String(booking.familyId) === userId;
+    const isProvider = String(booking.providerId) === userId;
+
+    if (!isFamily && !isProvider) {
+      return res.status(403).json({
+        message: "Vous n'êtes pas autorisé à modifier cette réservation",
+      });
+    }
+
+    if (!["completed", "cancelled", "rejected"].includes(booking.status)) {
+      return res.status(400).json({
+        message: "Vous ne pouvez retirer de l'historique qu'une réservation terminée ou annulée",
+      });
+    }
+
+    if (isFamily) booking.familyHidden = true;
+    if (isProvider) booking.providerHidden = true;
+    await booking.save();
+
+    res.json({ message: "Réservation retirée de votre historique" });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ======================
+// NOTER LA COLLABORATION (après une mission terminée)
+// Chaque partie peut noter l'autre une seule fois par réservation.
+// ======================
+exports.submitReview = async (req, res) => {
+  try {
+    const { rating, comment } = req.body;
+    const ratingNum = Number(rating);
+
+    if (!ratingNum || ratingNum < 1 || ratingNum > 5) {
+      return res.status(400).json({ message: "La note doit être comprise entre 1 et 5" });
+    }
+
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: "Réservation introuvable" });
+    }
+
+    if (booking.status !== "completed") {
+      return res.status(400).json({
+        message: "Vous ne pouvez noter qu'une collaboration terminée",
+      });
+    }
+
+    const userId = String(req.user.id);
+    const isFamily = String(booking.familyId) === userId;
+    const isProvider = String(booking.providerId) === userId;
+
+    if (!isFamily && !isProvider) {
+      return res.status(403).json({
+        message: "Vous n'êtes pas autorisé à noter cette collaboration",
+      });
+    }
+
+    if ((isFamily && booking.familyReviewed) || (isProvider && booking.providerReviewed)) {
+      return res.status(400).json({ message: "Vous avez déjà noté cette collaboration" });
+    }
+
+    const toUserId = isFamily ? booking.providerId : booking.familyId;
+    const fromRole = isFamily ? "family" : "provider";
+
+    const review = await BookingReview.create({
+      bookingId: booking._id,
+      fromUserId: req.user.id,
+      toUserId,
+      fromRole,
+      rating: ratingNum,
+      comment: comment || "",
+    });
+
+    if (isFamily) booking.familyReviewed = true;
+    if (isProvider) booking.providerReviewed = true;
+    await booking.save();
+
+    await notifyUser(req, {
+      userId: toUserId,
+      title: "Nouvelle note reçue ⭐",
+      message: "Vous avez reçu une note pour une collaboration terminée.",
+      type: "review_received",
+      bookingId: booking._id,
+    });
+
+    res.status(201).json({ message: "Note envoyée, merci !", review, booking });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ message: "Vous avez déjà noté cette collaboration" });
+    }
     res.status(500).json({ message: error.message });
   }
 };

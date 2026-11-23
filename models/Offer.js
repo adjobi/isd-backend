@@ -54,6 +54,11 @@ const offerSchema = new mongoose.Schema(
     acceptedProvider: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     agreedPrice: { type: Number, default: null },
     acceptedAt: { type: Date, default: null },
+    // Facture ISD réglée (Phase 5)
+    paidAt: { type: Date, default: null },
+    // Offre republiée au titre de la garantie de remplacement : mise en relation gratuite
+    replacementOf: { type: mongoose.Schema.Types.ObjectId, ref: "Offer", default: null },
+    feeWaived: { type: Boolean, default: false },
     // Candidatures reçues, avec la négociation du prix
     applications: [
       {

@@ -38,6 +38,7 @@ function publicSession(s) {
     status: o.status,
     closedReason: o.closedReason || null,
     startDate: o.startDate || null,
+    isPaid: !!o.isPaid,
     startDateProposal: o.startDateProposal?.date ? { date: o.startDateProposal.date, by: o.startDateProposal.by, at: o.startDateProposal.at } : null,
     lastReadAt: o.lastReadAt || {},
     warnings: o.warnings || { family: 0, provider: 0 },

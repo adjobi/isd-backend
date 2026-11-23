@@ -11,6 +11,7 @@ const Notification = require("../models/Notification");
 const { containsChatContact } = require("../validators/contact");
 const { encrypt } = require("../utils/crypto");
 const chat = require("../services/chat");
+const payment = require("../services/payment");
 
 const MESSAGE_MAX = 1000;
 const MAX_WARNINGS = 3;
@@ -149,7 +150,8 @@ router.post("/:offerId/messages", auth, async (req, res) => {
     const base = { offerId: session.offerId, familyId: session.familyId, providerId: session.providerId };
 
     // Coordonnées : message bloqué (chiffré, visible du seul expéditeur), avertissement, fermeture à la 3e fois.
-    if (containsChatContact(text)) {
+    // Après paiement de la facture, les coordonnées sont déjà échangées : plus de filtre.
+    if (!session.isPaid && containsChatContact(text)) {
       if (!session.warnings) session.warnings = { family: 0, provider: 0 };
       const count = (session.warnings[role] || 0) + 1;
       session.warnings[role] = count;
@@ -295,7 +297,7 @@ router.post("/:offerId/start-date/respond", auth, async (req, res) => {
       session.startDate = proposal.date;
       session.status = "agreement_reached";
       sys = await chat.systemMessage(session,
-        `📅 Date de début convenue : ${day}.\n\nProchaine étape : le règlement de la facture ISD par Mobile Money. Vos coordonnées seront alors échangées automatiquement.`,
+        `📅 Date de début convenue : ${day}.\n\nProchaine étape : le règlement de la facture ISD par la famille. Vos coordonnées et le contrat seront alors disponibles automatiquement.`,
         { meta: { kind: "start_date_confirmed", date: proposal.date } });
       await chat.notify(proposerId, "Date de début confirmée 📅", `Le démarrage est fixé au ${day}.`, session.offerId);
     } else {
@@ -307,6 +309,14 @@ router.post("/:offerId/start-date/respond", auth, async (req, res) => {
     await session.save();
     chat.emitMessage(io, sys);
     chat.emitSession(io, session);
+    // Date convenue : la facture ISD est émise (offerte s'il s'agit d'un remplacement garanti).
+    if (accept) {
+      try {
+        await payment.ensureInvoice(session, io);
+      } catch (err) {
+        console.error("facture", err);
+      }
+    }
     return res.json({ message: chat.publicMessage(sys), session: chat.publicSession(session) });
   } catch (err) {
     return serverError(res, err);

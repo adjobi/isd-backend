@@ -94,6 +94,7 @@ exports.register = async (req, res) => {
         subjects: user.subjects,
         availability: user.availability,
         isProfileCompleted: user.isProfileCompleted,
+        isAdmin: !!user.isAdmin,
       },
     });
 
@@ -172,6 +173,7 @@ exports.login = async (req, res) => {
         subjects: user.subjects,
         availability: user.availability,
         isProfileCompleted: user.isProfileCompleted,
+        isAdmin: !!user.isAdmin,
       },
     });
 

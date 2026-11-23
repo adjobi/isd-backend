@@ -7,6 +7,9 @@ const userSchema = new mongoose.Schema(
     role: { type: String, enum: ["family", "nanny", "tutor"], required: true },
     email: { type: String, unique: true, required: true, lowercase: true, trim: true },
     password: { type: String, required: true },
+    // Droits d'administration ISD (validation des paiements, tarifs).
+    // Jamais modifiable depuis l'app : uniquement par scripts/make-admin.js.
+    isAdmin: { type: Boolean, default: false },
 
     // ======================
     // PROFILE COMMON

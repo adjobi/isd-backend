@@ -50,7 +50,11 @@ const offerSchema = new mongoose.Schema(
       enum: ["open", "closed"],
       default: "open",
     },
-    // Candidatures reçues
+    // Accord conclu (candidature acceptée) : base de la facture ISD (Phase 5)
+    acceptedProvider: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    agreedPrice: { type: Number, default: null },
+    acceptedAt: { type: Date, default: null },
+    // Candidatures reçues, avec la négociation du prix
     applications: [
       {
         provider: {
@@ -62,6 +66,19 @@ const offerSchema = new mongoose.Schema(
           enum: ["pending", "accepted", "rejected"],
           default: "pending",
         },
+        // Prix actuellement sur la table et auteur de cette proposition :
+        // c'est à l'autre partie de répondre (accepter, contre-proposer ou refuser).
+        proposedPrice: { type: Number, default: null },
+        lastOfferBy: { type: String, enum: ["family", "provider"], default: "provider" },
+        history: [
+          {
+            _id: false,
+            by: { type: String, enum: ["family", "provider"], required: true },
+            amount: { type: Number, required: true },
+            at: { type: Date, default: Date.now },
+          },
+        ],
+        message: { type: String, default: "" },
         appliedAt: {
           type: Date,
           default: Date.now,
@@ -69,7 +86,7 @@ const offerSchema = new mongoose.Schema(
       },
     ],
   },
-  { timestamps: true }
+  { timestamps: true, optimisticConcurrency: true }
 );
 
 module.exports = mongoose.model("Offer", offerSchema);

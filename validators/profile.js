@@ -9,10 +9,10 @@ const PRICE_MIN = 500;
 const PRICE_MAX = 2000000;
 
 const PRICING_BY_ROLE = {
-  nanny: ["month", "hour"],
-  tutor: ["hour", "session", "month"],
+  nanny: ["month", "day", "hour"],
+  tutor: ["hour", "session", "day", "month"],
 };
-const AVAILABILITY = ["available", "busy", "away"];
+const AVAILABILITY = ["available", "busy", "away", "holiday"];
 
 // ---------- Coordonnées cachées dans du texte libre ----------
 // Les coordonnées ne sont communiquées qu'après paiement : on refuse

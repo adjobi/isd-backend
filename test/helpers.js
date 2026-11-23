@@ -13,6 +13,7 @@ const buildApp = () => {
   app.use("/api/auth", require("../routes/authRoutes"));
   app.use("/api/nannies", require("../routes/nannyRoutes"));
   app.use("/api/offers", require("../routes/offerRoutes"));
+  app.use("/api/notifications", require("../routes/notificationRoutes"));
   app.use(bodyErrorHandler);
   return app;
 };

@@ -10,7 +10,7 @@ const PUBLIC_PROVIDER_FIELDS = [
 ].join(" ");
 
 const PROVIDER_TYPES = ["nanny", "tutor"];
-const AVAILABILITIES = ["available", "busy", "away"];
+const AVAILABILITIES = ["available", "busy", "away", "holiday"];
 const MAX_TEXT = 60;
 const MAX_LIMIT = 50;
 

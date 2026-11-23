@@ -26,13 +26,13 @@ const userSchema = new mongoose.Schema(
     // ======================
     serviceType: { type: String, enum: ["nanny", "tutor"] },
     subjects: { type: [String], default: [] },
-    pricingType: { type: String, enum: ["hour", "session", "month"] },
+    pricingType: { type: String, enum: ["hour", "day", "session", "month"] },
     pricingAmount: { type: Number },
 
     // ======================
     // MARKETPLACE STATUS
     // ======================
-    availability: { type: String, enum: ["available", "busy", "away"], default: "available" },
+    availability: { type: String, enum: ["available", "busy", "away", "holiday"], default: "available" },
     rating: { type: Number, default: 0 },
     isVerified: { type: Boolean, default: false },
     isProfileCompleted: { type: Boolean, default: false },

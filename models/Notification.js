@@ -34,6 +34,7 @@ const notificationSchema = new mongoose.Schema(
         "booking_cancelled",
         "chat_message",
         "system_alert",
+        "offer_counter",
       ],
       required: true,
     },

@@ -1,12 +1,18 @@
+const mongoose = require("mongoose");
 const Notification = require("../models/Notification");
+
+const serverError = (res, where, error) => {
+  console.error(where, error);
+  return res.status(500).json({ message: "Impossible de charger les notifications. Réessayez." });
+};
 
 // ======================
 // GET USER NOTIFICATIONS
 // ======================
 exports.getNotifications = async (req, res) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
-
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const skip = (page - 1) * limit;
 
     const notifications = await Notification.find({
@@ -14,7 +20,8 @@ exports.getNotifications = async (req, res) => {
     })
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(Number(limit));
+      .limit(limit)
+      .lean();
 
     const total = await Notification.countDocuments({
       userId: req.user.id,
@@ -29,14 +36,14 @@ exports.getNotifications = async (req, res) => {
       data: notifications,
       pagination: {
         total,
-        page: Number(page),
+        page,
         pages: Math.ceil(total / limit),
       },
       unreadCount,
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return serverError(res, "notifications", error);
   }
 };
 
@@ -45,6 +52,9 @@ exports.getNotifications = async (req, res) => {
 // ======================
 exports.markAsRead = async (req, res) => {
   try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: "Identifiant invalide" });
+    }
     const notification = await Notification.findOne({
       _id: req.params.id,
       userId: req.user.id, // 🔐 SECURITY FIX
@@ -65,7 +75,7 @@ exports.markAsRead = async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return serverError(res, "notifications", error);
   }
 };
 
@@ -89,7 +99,7 @@ exports.markAllAsRead = async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return serverError(res, "notifications", error);
   }
 };
 
@@ -106,6 +116,6 @@ exports.getUnreadCount = async (req, res) => {
     res.json({ unreadCount: count });
 
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    return serverError(res, "notifications", error);
   }
 };

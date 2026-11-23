@@ -1,0 +1,15 @@
+# Base MongoDB locale pour le développement.
+#   docker compose up -d     → démarre la base (port 27017, accessible depuis cette machine seulement)
+#   docker compose stop      → l'arrête (les données sont conservées dans le volume)
+services:
+  mongo:
+    image: mongo:7
+    container_name: isd-mongo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - isd-mongo-data:/data/db
+
+volumes:
+  isd-mongo-data:

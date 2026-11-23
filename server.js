@@ -7,6 +7,7 @@ const { Server } = require("socket.io");
 dotenv.config();
 
 const connectDB = require("./config/db");
+const { jsonParsers, bodyErrorHandler } = require("./middleware/bodyParsing");
 
 // =====================
 // ROUTES
@@ -45,7 +46,7 @@ app.use(cors({
   methods: ["GET", "POST", "PUT", "DELETE"]
 }));
 
-app.use(express.json());
+jsonParsers(app);
 
 // =====================
 // HTTP SERVER
@@ -99,6 +100,8 @@ app.get("/api/debug/online-users", (req, res) => {
     onlineUsers: Array.from(onlineUsers.entries()),
   });
 });
+
+app.use(bodyErrorHandler);
 
 // =====================
 // START SERVER

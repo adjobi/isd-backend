@@ -8,9 +8,12 @@ const tokenFor = (id, role) => jwt.sign({ id, role }, process.env.JWT_SECRET, { 
 // Application minimale montant uniquement les routes testées (pas de DB, pas de socket).
 const buildApp = () => {
   const app = express();
-  app.use(express.json());
+  const { jsonParsers, bodyErrorHandler } = require("../middleware/bodyParsing");
+  jsonParsers(app);
+  app.use("/api/auth", require("../routes/authRoutes"));
   app.use("/api/nannies", require("../routes/nannyRoutes"));
   app.use("/api/offers", require("../routes/offerRoutes"));
+  app.use(bodyErrorHandler);
   return app;
 };
 

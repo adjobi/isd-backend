@@ -297,7 +297,7 @@ router.post("/:offerId/start-date/respond", auth, async (req, res) => {
       session.startDate = proposal.date;
       session.status = "agreement_reached";
       sys = await chat.systemMessage(session,
-        `📅 Date de début convenue : ${day}.\n\nProchaine étape : le règlement de la facture ISD par la famille. Vos coordonnées et le contrat seront alors disponibles automatiquement.`,
+        `📅 Date de début convenue : ${day}.\n\nProchaine étape : le règlement de la facture ISD par la famille. Vos coordonnées et le récapitulatif de vos engagements seront alors disponibles automatiquement.`,
         { meta: { kind: "start_date_confirmed", date: proposal.date } });
       await chat.notify(proposerId, "Date de début confirmée 📅", `Le démarrage est fixé au ${day}.`, session.offerId);
     } else {

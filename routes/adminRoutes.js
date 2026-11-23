@@ -9,6 +9,8 @@ const Offer = require("../models/Offer");
 const User = require("../models/User");
 const Setting = require("../models/Setting");
 const AdminLog = require("../models/AdminLog");
+const Report = require("../models/Report");
+const { REASON_LABELS } = require("../services/engagement");
 const chat = require("../services/chat");
 const payment = require("../services/payment");
 const { getPricing, validatePricing, launchActive } = require("../services/pricing");
@@ -16,6 +18,11 @@ const { getPricing, validatePricing, launchActive } = require("../services/prici
 const STATUSES = ["submitted", "pending", "paid", "rejected", "waived"];
 
 router.use(auth, adminOnly);
+
+router.param("reportId", (req, res, next, id) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });
+  return next();
+});
 
 router.param("invoiceId", (req, res, next, id) => {
   if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });
@@ -127,6 +134,44 @@ router.put("/settings/pricing", async (req, res) => {
     await Setting.findOneAndUpdate({ key: "pricing" }, { $set: { value, updatedBy: req.user.id } }, { upsert: true, new: true });
     await audit(req, "pricing_updated", { before: pricingView(before), after: value });
     return res.json(pricingView(await getPricing()));
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// ================================
+// SIGNALEMENTS (fins de mission pour faute grave)
+// ================================
+router.get("/reports", async (req, res) => {
+  try {
+    const status = req.query.status === "handled" ? "handled" : "open";
+    const reports = await Report.find({ status }).sort({ createdAt: status === "open" ? 1 : -1 }).limit(100)
+      .populate("by", "firstName lastName phone role").populate("against", "firstName lastName phone role")
+      .populate("offerId", "description city serviceType").populate("handledBy", "firstName lastName").lean();
+    const open = await Report.countDocuments({ status: "open" });
+    return res.json({ status, open, reports: reports.map((r) => ({ ...r, reasonLabel: REASON_LABELS[r.reason] || r.reason })) });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+router.post("/reports/:reportId/handle", async (req, res) => {
+  try {
+    const note = typeof req.body?.note === "string" ? req.body.note.trim().replace(/\s+/g, " ") : "";
+    if (note.length < 10 || note.length > 500) return res.status(400).json({ message: "Résumez la suite donnée en 10 à 500 caractères", errors: { note: "10 à 500 caractères" } });
+    const report = await Report.findById(req.params.reportId);
+    if (!report) return res.status(404).json({ message: "Signalement introuvable" });
+    if (report.status === "handled") return res.status(409).json({ message: "Ce signalement est déjà traité." });
+    if ([String(report.by), String(report.against)].includes(String(req.user.id))) {
+      return res.status(403).json({ message: "Vous êtes concerné par ce signalement : un autre membre de l'équipe doit le traiter." });
+    }
+    report.status = "handled";
+    report.handledBy = req.user.id;
+    report.handledAt = new Date();
+    report.note = note;
+    await report.save();
+    await audit(req, "report_handled", { reportId: String(report._id), note });
+    return res.json({ report });
   } catch (err) {
     return serverError(res, err);
   }

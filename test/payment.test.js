@@ -298,6 +298,7 @@ describe("Garantie de remplacement", () => {
   });
 
   test("garantie expirée ou déjà utilisée (409), raison obligatoire (400)", async () => {
+    mock.method(Contract, "findOne", async () => null);
     mock.method(Invoice, "findOne", async () => paid({ guaranteeUntil: new Date(Date.now() - 1000) }));
     assert.equal((await as("post", `/api/payments/${OFFER_ID}/replacement`, FAMILY, { reason: "Horaires incompatibles avec l'école" })).status, 409);
     mock.method(Invoice, "findOne", async () => paid({ guaranteeUsedAt: new Date() }));
@@ -328,13 +329,17 @@ describe("Contrat", () => {
 
   test("chaque partie accepte une fois ; l'autre est prévenue", async () => {
     mock.method(Invoice, "findOne", async () => fakeInvoice({ status: "paid" }));
-    const contract = { acceptedAt: { family: null, provider: null }, async save() {} };
+    const contract = { terms: {}, acceptedAt: { family: null, provider: null }, markModified() {}, async save() {} };
     mock.method(Contract, "findOne", async () => contract);
+    mock.method(ChatSession, "findOne", async () => null);
     const notifs = mock.method(Notification, "create", async () => ({}));
-    const res = await as("post", `/api/payments/${OFFER_ID}/contract/accept`, NANNY);
+    // Le préavis doit être choisi avant de confirmer
+    assert.equal((await as("post", `/api/payments/${OFFER_ID}/contract/accept`, NANNY)).status, 400);
+    const res = await as("post", `/api/payments/${OFFER_ID}/contract/accept`, NANNY, { noticeDays: 7 });
     assert.equal(res.status, 200);
     assert.ok(contract.acceptedAt.provider instanceof Date);
     assert.equal(contract.acceptedAt.family, null);
+    assert.equal(contract.terms.noticeDays, 7);
     await as("post", `/api/payments/${OFFER_ID}/contract/accept`, NANNY);
     assert.equal(notifs.mock.callCount(), 1);
   });

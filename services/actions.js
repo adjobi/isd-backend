@@ -1,0 +1,134 @@
+// Actions en attente de l'utilisateur : ce que l'autre partie (ou ISD) attend de lui.
+// Calculées à la demande à partir des vraies données, jamais stockées : une action disparaît
+// d'elle-même dès qu'elle est faite.
+const Offer = require("../models/Offer");
+const Invoice = require("../models/Invoice");
+const Contract = require("../models/Contract");
+const User = require("../models/User");
+const { ChatSession } = require("../models/Chat");
+
+const idOf = (v) => String(v?._id || v);
+const shortName = (u) => (u ? [u.firstName, u.lastName ? `${u.lastName[0]}.` : ""].filter(Boolean).join(" ") : "");
+const plural = (n, one, many) => (n > 1 ? many : one);
+const formatDay = (d) => new Date(d).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone: "Africa/Abidjan" });
+
+// Ordre d'affichage : ce qui bloque l'autre partie ou engage de l'argent d'abord.
+const PRIORITY = {
+  end_response: 1, payment_rejected: 2, payment: 3, notice_confirm: 4, engagements: 5,
+  applications: 6, counter_offer: 6, start_date_reply: 7, start_date_propose: 8,
+};
+
+async function pendingActions(userId, tokenRole) {
+  const me = String(userId);
+  const isFamily = tokenRole === "family";
+  const actions = [];
+  const add = (a) => actions.push({ ...a, id: `${a.kind}:${a.params.offerId}`, priority: PRIORITY[a.kind] });
+
+  const [offers, sessions, invoices, contracts] = await Promise.all([
+    isFamily
+      ? Offer.find({ family: me, status: "open" }).select("description applications updatedAt").lean()
+      : Offer.find({ status: "open", "applications.provider": me }).select("description family applications updatedAt").lean(),
+    ChatSession.find({ [isFamily ? "familyId" : "providerId"]: me, status: { $ne: "closed" }, startDate: null })
+      .select("offerId familyId providerId startDateProposal createdAt").lean(),
+    isFamily ? Invoice.find({ family: me, status: { $in: ["pending", "rejected"] } }).select("offerId status amount reference updatedAt").lean() : [],
+    Contract.find({ [isFamily ? "family" : "provider"]: me, $or: [{ endedAt: null }, { endedAt: { $gt: new Date() } }] })
+      .select("offerId family provider acceptedAt terms.noticeDays terms.noticeSetBy termination endedAt updatedAt").lean(),
+  ]);
+
+  // Noms et descriptions utiles aux libellés, en deux requêtes
+  const offerIds = new Set([...sessions.map((s) => idOf(s.offerId)), ...invoices.map((i) => idOf(i.offerId)), ...contracts.map((c) => idOf(c.offerId))]);
+  const userIds = new Set([
+    ...sessions.map((s) => idOf(isFamily ? s.providerId : s.familyId)),
+    ...contracts.map((c) => idOf(isFamily ? c.provider : c.family)),
+    ...offers.filter((o) => o.family).map((o) => idOf(o.family)),
+  ]);
+  const [offerDocs, users] = await Promise.all([
+    offerIds.size ? Offer.find({ _id: { $in: [...offerIds] } }).select("description").lean() : [],
+    userIds.size ? User.find({ _id: { $in: [...userIds] } }).select("firstName lastName").lean() : [],
+  ]);
+  const describe = (id) => offerDocs.find((o) => idOf(o) === idOf(id))?.description || "";
+  const nameOf = (id) => shortName(users.find((u) => idOf(u) === idOf(id))) || (isFamily ? "Le prestataire" : "La famille");
+
+  // Candidatures et négociation du prix
+  for (const o of offers) {
+    if (isFamily) {
+      const waiting = (o.applications || []).filter((a) => a.status === "pending" && a.lastOfferBy !== "family");
+      if (waiting.length) {
+        add({
+          kind: "applications", params: { offerId: idOf(o) }, at: o.updatedAt,
+          title: `${waiting.length} ${plural(waiting.length, "candidature attend", "candidatures attendent")} votre réponse`,
+          text: o.description, cta: "Voir les candidats", route: "OfferDetail",
+        });
+      }
+    } else {
+      const mine = (o.applications || []).find((a) => idOf(a.provider) === me);
+      if (mine?.status === "pending" && mine.lastOfferBy === "family") {
+        add({
+          kind: "counter_offer", params: { offerId: idOf(o) }, at: o.updatedAt,
+          title: `${nameOf(o.family)} vous propose un prix`,
+          text: o.description, cta: "Répondre", route: "OfferDetail",
+        });
+      }
+    }
+  }
+
+  // Date de début à convenir dans le chat
+  const myRole = isFamily ? "family" : "provider";
+  for (const s of sessions) {
+    const other = nameOf(isFamily ? s.providerId : s.familyId);
+    const p = s.startDateProposal;
+    if (p?.date && p.by && p.by !== myRole) {
+      add({
+        kind: "start_date_reply", params: { offerId: idOf(s.offerId) }, at: p.at,
+        title: `${other} propose de commencer le ${formatDay(p.date)}`,
+        text: "Confirmez la date ou proposez-en une autre dans le chat.", cta: "Répondre", route: "Chat",
+      });
+    } else if (!p?.date) {
+      add({
+        kind: "start_date_propose", params: { offerId: idOf(s.offerId) }, at: s.createdAt,
+        title: `Convenez d'une date de début avec ${other}`,
+        text: describe(s.offerId), cta: "Ouvrir le chat", route: "Chat",
+      });
+    }
+  }
+
+  // Facture ISD (famille)
+  for (const inv of invoices) {
+    const rejected = inv.status === "rejected";
+    add({
+      kind: rejected ? "payment_rejected" : "payment", params: { offerId: idOf(inv.offerId) }, at: inv.updatedAt,
+      title: rejected ? "Paiement non confirmé : vérifiez votre déclaration" : "Réglez la facture ISD pour obtenir les coordonnées",
+      text: describe(inv.offerId), cta: rejected ? "Corriger" : "Voir la facture", route: "Payment",
+    });
+  }
+
+  // Engagements à confirmer et fin de mission
+  for (const c of contracts) {
+    const other = nameOf(isFamily ? c.provider : c.family);
+    const params = { offerId: idOf(c.offerId) };
+    const t = c.termination;
+    if (t?.status === "proposed" && t.by !== myRole) {
+      add({
+        kind: "end_response", params, at: t.requestedAt,
+        title: `${other} propose de terminer la mission le ${formatDay(t.effectiveAt)}`,
+        text: "Acceptez ou refusez cette proposition.", cta: "Répondre", route: "Mission",
+      });
+    }
+    if (!c.endedAt && !c.acceptedAt?.[myRole]) {
+      const n = c.terms?.noticeDays;
+      const proposedByOther = Number.isInteger(n) && c.terms?.noticeSetBy && c.terms.noticeSetBy !== myRole;
+      add({
+        kind: proposedByOther ? "notice_confirm" : "engagements", params, at: c.updatedAt,
+        title: proposedByOther
+          ? `${other} propose ${n === 0 ? "aucun préavis" : `un préavis de ${n} jour${n > 1 ? "s" : ""}`}`
+          : `Confirmez vos engagements avec ${other}`,
+        text: proposedByOther ? "Confirmez cette durée ou proposez-en une autre." : "Choisissez ensemble la durée du préavis, puis confirmez le récapitulatif.",
+        cta: "Confirmer", route: "Mission",
+      });
+    }
+  }
+
+  return actions.sort((a, b) => a.priority - b.priority || new Date(b.at) - new Date(a.at));
+}
+
+module.exports = { pendingActions, PRIORITY };

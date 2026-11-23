@@ -26,6 +26,7 @@ const nannyRoutes = require("./routes/nannyRoutes");
 const offerRoutes = require("./routes/offerRoutes");
 const chatRoutes = require("./routes/chatRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
+const actionRoutes = require("./routes/actionRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 
 // (OPTIONNEL MAIS RECOMMANDÉ)
@@ -101,6 +102,7 @@ if (notificationRoutes) {
 }
 app.use("/api/chat", chatRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/actions", actionRoutes);
 app.use("/api/admin", adminRoutes);
 
 // =====================

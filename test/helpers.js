@@ -1,5 +1,9 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
+
+// Pas de base en test : une requête non simulée échoue tout de suite au lieu d'attendre 10 s.
+mongoose.set("bufferCommands", false);
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || "secret-de-test";
 
@@ -14,6 +18,7 @@ const buildApp = () => {
   app.use("/api/nannies", require("../routes/nannyRoutes"));
   app.use("/api/offers", require("../routes/offerRoutes"));
   app.use("/api/notifications", require("../routes/notificationRoutes"));
+  app.use("/api/chat", require("../routes/chatRoutes"));
   app.use(bodyErrorHandler);
   return app;
 };

@@ -7,6 +7,7 @@ const User = require("../models/User");
 const Notification = require("../models/Notification");
 const { PUBLIC_PROVIDER_FIELDS } = require("../controllers/nannyController");
 const { validateOffer, readAmount, readMessage, MAX_COUNTERS } = require("../validators/offer");
+const { openChat } = require("../services/chat");
 
 // Champs d'une famille visibles par les prestataires : jamais de téléphone ni d'email.
 const PUBLIC_FAMILY_FIELDS = "firstName lastName city commune photo";
@@ -109,6 +110,13 @@ async function conclude(offer, app, acceptedBy) {
   offer.agreedPrice = app.proposedPrice || offer.price || null;
   offer.acceptedAt = new Date();
   await offer.save();
+
+  // Ouverture du chat ISD (un échec ne remet pas l'accord en cause : il sera rouvert à la première visite).
+  try {
+    await openChat(offer, providerId);
+  } catch (err) {
+    console.error("ouverture du chat", err);
+  }
 
   const price = offer.agreedPrice ? ` à ${formatPrice(offer.agreedPrice)}` : "";
   if (acceptedBy === "family") {

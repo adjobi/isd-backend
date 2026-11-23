@@ -1,479 +1,322 @@
+// Chat à trois : famille, prestataire et système ISD.
+// Accès réservé aux deux participants de l'accord conclu en Phase 3.
 const express = require("express");
+const mongoose = require("mongoose");
 const router = express.Router();
 const auth = require("../middleware/authMiddleware");
 const { ChatMessage, ChatSession } = require("../models/Chat");
 const Offer = require("../models/Offer");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
-const Booking = require("../models/Booking");
+const { containsChatContact } = require("../validators/contact");
+const { encrypt } = require("../utils/crypto");
+const chat = require("../services/chat");
 
-// ================================
-// CONFIG ISD
-// ================================
-const ISD_MOBILE_MONEY_NUMBER = "+225 07 09 10 25 24";
-const ISD_COMMISSION_RATE = 0.2; // 20% du tarif du prestataire
+const MESSAGE_MAX = 1000;
+const MAX_WARNINGS = 3;
+const START_DATE_MAX_DAYS = 180;
+const PUBLIC_USER_FIELDS = "firstName lastName photo role city commune availability";
 
-function computeInvoiceAmount(pricingAmount) {
-  const raw = (pricingAmount || 0) * ISD_COMMISSION_RATE;
-  return Math.round(raw / 100) * 100; // arrondi au multiple de 100 le plus proche
-}
+router.param("offerId", (req, res, next, id) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });
+  return next();
+});
 
-// ================================
-// PATTERNS INFOS SENSIBLES
-// ================================
-const SENSITIVE_PATTERNS = [
-  // Numéros de téléphone (formats CI, international)
-  /(\+?225?\s?)?(\d[\s\-.]?){8,10}/g,
-  // Email
-  /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g,
-  // Facebook / Messenger / WhatsApp / Instagram
-  /(facebook|messenger|whatsapp|instagram|telegram|twitter|snapchat|tiktok)/gi,
-  // Liens
-  /(https?:\/\/|www\.)[^\s]+/gi,
-];
+const serverError = (res, err) => {
+  console.error("chat", err);
+  return res.status(500).json({ message: "Erreur serveur. Réessayez dans un instant." });
+};
 
-const WARNING_MESSAGES = [
-  "⚠️ ISD Système : Le partage de coordonnées personnelles est interdit. Merci de respecter nos conditions.",
-  "⚠️ ISD Système : Ce message contient des informations interdites et a été masqué. Dernier avertissement.",
-  "🚫 ISD Système : Vous avez persisté à partager des informations interdites. Ce chat est fermé conformément à nos conditions d'utilisation.",
-];
-
-function detectAndCensor(text) {
-  let censored = text;
-  let hasViolation = false;
-  SENSITIVE_PATTERNS.forEach((pattern) => {
-    if (pattern.test(censored)) {
-      hasViolation = true;
-      censored = censored.replace(pattern, "***");
+// Charge la session et vérifie que l'utilisateur y participe.
+// Si l'offre a été conclue avant l'existence du chat, la session est créée à la volée.
+async function loadSession(req, res) {
+  const { offerId } = req.params;
+  let session = await ChatSession.findOne({ offerId });
+  if (!session) {
+    const offer = await Offer.findById(offerId);
+    const accepted = offer?.applications?.find((a) => a.status === "accepted");
+    const userId = String(req.user.id);
+    if (offer && accepted && (chat.idOf(offer.family) === userId || chat.idOf(accepted.provider) === userId)) {
+      session = await chat.openChat(offer, accepted.provider);
     }
-    pattern.lastIndex = 0;
-  });
-  return { censored, hasViolation };
+  }
+  const role = chat.participantRole(session, req.user.id);
+  if (!session || !role) {
+    res.status(404).json({ message: "Conversation introuvable" });
+    return {};
+  }
+  return { session, role };
 }
 
-function detectAgreement(text) {
-  const agreementWords = [
-    "d'accord", "ok", "oui", "accepte", "accepté", "convenu",
-    "parfait", "marché conclu", "on est ok", "c'est bon", "accord",
-    "je suis ok", "je suis d'accord", "allons-y", "c'est parti",
-  ];
-  const lower = text.toLowerCase();
-  return agreementWords.some((w) => lower.includes(w));
+const ensureOpen = (session, res) => {
+  if (session.status === "closed") {
+    res.status(409).json({ message: "Ce chat est fermé." });
+    return false;
+  }
+  return true;
+};
+
+// Notification « nouveau message » si le destinataire n'a pas le chat ouvert,
+// et une seule non lue à la fois par conversation.
+async function notifyRecipient(io, session, senderRole, preview) {
+  const to = chat.otherRole(senderRole);
+  if (await chat.isInRoom(io, session.offerId, to)) return;
+  const userId = to === "family" ? session.familyId : session.providerId;
+  const pending = await Notification.findOne({ userId, type: "chat_message", isRead: false, "metadata.offerId": session.offerId });
+  if (pending) return;
+  const who = senderRole === "family" ? "La famille" : "Votre prestataire";
+  const text = preview.length > 80 ? `${preview.slice(0, 79)}…` : preview;
+  await chat.notify(userId, "Nouveau message", `${who} : ${text}`, session.offerId);
 }
 
 // ================================
-// CRÉER OU RÉCUPÉRER SESSION CHAT
+// MES CONVERSATIONS
 // ================================
-router.post("/session/:offerId", auth, async (req, res) => {
+router.get("/", auth, async (req, res) => {
   try {
-    const offer = await Offer.findById(req.params.offerId)
-      .populate("family", "firstName lastName phone city")
-      .populate("applications.provider", "firstName lastName phone city serviceType pricingAmount");
-
-    if (!offer) return res.status(404).json({ message: "Offre introuvable" });
-
-    // Trouver le prestataire accepté
-    const acceptedApp = offer.applications.find(a => a.status === "accepted");
-    if (!acceptedApp) return res.status(400).json({ message: "Aucune candidature acceptée" });
-
-    const familyId = offer.family._id;
-    const providerId = acceptedApp.provider._id;
-
-    // Vérifier que l'utilisateur est bien partie prenante
-    const userId = req.user.id;
-    if (userId !== familyId.toString() && userId !== providerId.toString()) {
-      return res.status(403).json({ message: "Non autorisé" });
-    }
-
-    // Créer ou récupérer la session
-    let session = await ChatSession.findOne({ offerId: offer._id });
-    if (!session) {
-      session = await ChatSession.create({
-        offerId: offer._id,
-        familyId,
-        providerId,
-        invoiceAmount: computeInvoiceAmount(acceptedApp.provider.pricingAmount),
-      });
-
-      // Message de bienvenue du système
-      const welcomeMsg = `🤝 Bonjour ! Je suis l'assistant ISD.
-
-Une collaboration a été établie entre vous. Vous pouvez maintenant discuter des modalités de votre collaboration.
-
-📋 Rappel des règles :
-• Le partage de numéros de téléphone, emails ou réseaux sociaux est strictement interdit
-• Une fois votre accord confirmé, une facture vous sera envoyée
-• Les coordonnées seront partagées après paiement
-
-Bonne discussion ! 😊`;
-
-      await ChatMessage.create({
-        offerId: offer._id,
-        familyId,
-        providerId,
-        senderRole: "system",
-        message: welcomeMsg,
-        type: "system",
-      });
-    }
-
-    const messages = await ChatMessage.find({ offerId: offer._id }).sort({ createdAt: 1 });
-    return res.json({ session, messages });
+    const me = req.user.id;
+    const sessions = await ChatSession.find({ $or: [{ familyId: me }, { providerId: me }] })
+      .sort({ lastMessageAt: -1, createdAt: -1 })
+      .limit(50)
+      .lean();
+    const list = await Promise.all(sessions.map(async (s) => {
+      const role = chat.participantRole(s, me);
+      const otherId = role === "family" ? s.providerId : s.familyId;
+      const [other, offer, last, unread] = await Promise.all([
+        User.findById(otherId).select(PUBLIC_USER_FIELDS).lean(),
+        Offer.findById(s.offerId).select("description serviceType agreedPrice city").lean(),
+        ChatMessage.findOne(chat.visibleFilter(s.offerId, role)).sort({ createdAt: -1 }).lean(),
+        ChatMessage.countDocuments({
+          ...chat.visibleFilter(s.offerId, role),
+          senderRole: { $ne: role },
+          createdAt: { $gt: s.lastReadAt?.[role] || new Date(0) },
+        }),
+      ]);
+      return {
+        ...chat.publicSession(s),
+        role,
+        other,
+        offer: offer ? { _id: offer._id, description: offer.description, serviceType: offer.serviceType, agreedPrice: offer.agreedPrice, city: offer.city } : null,
+        lastMessage: last ? chat.publicMessage(last) : null,
+        unread,
+      };
+    }));
+    return res.json(list);
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return serverError(res, err);
+  }
+});
+
+// ================================
+// UNE CONVERSATION : session + messages visibles
+// ================================
+router.get("/:offerId", auth, async (req, res) => {
+  try {
+    const { session, role } = await loadSession(req, res);
+    if (!session) return undefined;
+    const otherId = role === "family" ? session.providerId : session.familyId;
+    const [messages, other, offer] = await Promise.all([
+      ChatMessage.find(chat.visibleFilter(session.offerId, role)).sort({ createdAt: 1 }).limit(500).lean(),
+      User.findById(otherId).select(PUBLIC_USER_FIELDS).lean(),
+      Offer.findById(session.offerId).select("description serviceType agreedPrice city").lean(),
+    ]);
+    return res.json({
+      session: chat.publicSession(session),
+      role,
+      other,
+      offer,
+      messages: messages.map(chat.publicMessage),
+    });
+  } catch (err) {
+    return serverError(res, err);
   }
 });
 
 // ================================
 // ENVOYER UN MESSAGE
 // ================================
-router.post("/message/:offerId", auth, async (req, res) => {
+router.post("/:offerId/messages", auth, async (req, res) => {
   try {
-    const { message, startDate } = req.body;
-    if (!message?.trim()) return res.status(400).json({ message: "Message vide" });
+    const raw = req.body?.text;
+    if (typeof raw !== "string" || !raw.trim()) return res.status(400).json({ message: "Message vide" });
+    const text = raw.trim();
+    if (text.length > MESSAGE_MAX) return res.status(400).json({ message: `${MESSAGE_MAX} caractères maximum` });
 
-    const session = await ChatSession.findOne({ offerId: req.params.offerId });
-    if (!session) return res.status(404).json({ message: "Session introuvable" });
+    const { session, role } = await loadSession(req, res);
+    if (!session) return undefined;
+    if (!ensureOpen(session, res)) return undefined;
+    const io = req.app.get("io");
+    const base = { offerId: session.offerId, familyId: session.familyId, providerId: session.providerId };
 
-    if (session.status === "closed") {
-      return res.status(400).json({ message: "Ce chat est fermé" });
-    }
-
-    const userId = req.user.id;
-    const senderRole = userId === session.familyId.toString() ? "family" : "provider";
-
-    // ================================
-    // DÉTECTION INFOS SENSIBLES
-    // ================================
-    const { censored, hasViolation } = detectAndCensor(message);
-
-    if (hasViolation) {
-      session.warningCount += 1;
-      await session.save();
-
-      // Sauvegarder message censuré
-      const blockedMsg = await ChatMessage.create({
-        offerId: req.params.offerId,
-        familyId: session.familyId,
-        providerId: session.providerId,
-        senderRole,
-        message: "🔒 [Message masqué - contenu interdit]",
-        originalMessage: message,
-        isBlocked: true,
-        type: "warning",
-      });
-
-      // Avertissement système
-      const warnIndex = Math.min(session.warningCount - 1, WARNING_MESSAGES.length - 1);
-      const warnMsg = await ChatMessage.create({
-        offerId: req.params.offerId,
-        familyId: session.familyId,
-        providerId: session.providerId,
-        senderRole: "system",
-        message: WARNING_MESSAGES[warnIndex],
-        type: "warning",
-      });
-
-      // Fermer le chat si 3 avertissements
-      if (session.warningCount >= 3) {
+    // Coordonnées : message bloqué (chiffré, visible du seul expéditeur), avertissement, fermeture à la 3e fois.
+    if (containsChatContact(text)) {
+      if (!session.warnings) session.warnings = { family: 0, provider: 0 };
+      const count = (session.warnings[role] || 0) + 1;
+      session.warnings[role] = count;
+      session.warningCount = (session.warningCount || 0) + 1;
+      const created = [];
+      created.push(await ChatMessage.create({
+        ...base, senderRole: role, type: "blocked", isBlocked: true, visibleTo: role,
+        message: "Message non transmis : il contenait des coordonnées.",
+        originalEncrypted: encrypt(text),
+      }));
+      if (count < MAX_WARNINGS) {
+        created.push(await chat.systemMessage(session, count === 1
+          ? `Rappel ISD : téléphone, email, liens et réseaux sociaux sont interdits dans le chat. Ils seront échangés automatiquement après le paiement de la facture ISD. Votre message n'a pas été transmis. (Avertissement 1/${MAX_WARNINGS})`
+          : `Dernier avertissement ISD : au prochain partage de coordonnées, ce chat sera fermé. (Avertissement ${count}/${MAX_WARNINGS})`,
+        { type: "warning", visibleTo: role }));
+      } else {
         session.status = "closed";
-        await session.save();
+        session.closedReason = "contact_sharing";
+        session.closedBy = "system";
+        created.push(await chat.systemMessage(session,
+          "Ce chat a été fermé par ISD : partage répété de coordonnées, contraire aux conditions d'utilisation. Contactez le support ISD si besoin.",
+          { type: "warning" }));
+        const otherId = role === "family" ? session.providerId : session.familyId;
+        await chat.notify(otherId, "Chat fermé par ISD", "La conversation a été fermée suite au non-respect des règles. Contactez le support ISD si besoin.", session.offerId);
       }
-
-      const io = req.app.get("io");
-      if (io) {
-        io.to(`chat_${req.params.offerId}`).emit("new_message", blockedMsg);
-        io.to(`chat_${req.params.offerId}`).emit("new_message", warnMsg);
-      }
-
-      return res.json({ blocked: true, warning: WARNING_MESSAGES[warnIndex], session });
-    }
-
-    // ================================
-    // MESSAGE NORMAL
-    // ================================
-    const savedMsg = await ChatMessage.create({
-      offerId: req.params.offerId,
-      familyId: session.familyId,
-      providerId: session.providerId,
-      senderRole,
-      message: censored,
-      type: "text",
-    });
-
-    // ================================
-    // DÉTECTION ACCORD
-    // ================================
-    if (detectAgreement(message)) {
-      if (senderRole === "family") session.familyAgreed = true;
-      if (senderRole === "provider") session.providerAgreed = true;
-
-      // Sauvegarder date de début si fournie
-      if (startDate) session.startDate = new Date(startDate);
-
+      session.lastMessageAt = new Date();
       await session.save();
-
-      // Si les DEUX parties sont d'accord → envoyer facture
-      if (session.familyAgreed && session.providerAgreed && session.status === "active") {
-        session.status = "agreement_reached";
-        await session.save();
-
-        // Récupérer le prestataire pour calculer la facture (20% de son tarif, arrondi au multiple de 100)
-        const provider = await User.findById(session.providerId);
-        const invoiceAmount = computeInvoiceAmount(provider?.pricingAmount);
-        session.invoiceAmount = invoiceAmount;
-        session.status = "invoice_sent";
-        await session.save();
-
-        const invoiceMsg = await ChatMessage.create({
-          offerId: req.params.offerId,
-          familyId: session.familyId,
-          providerId: session.providerId,
-          senderRole: "system",
-          message: `🎉 Accord confirmé entre les deux parties !
-
-💼 Récapitulatif de la collaboration :
-• Service : ${(provider?.serviceType || provider?.role) === "nanny" ? "Garde d'enfants (Nounou)" : "Cours particuliers (Répétiteur)"}
-• Prestataire : ${provider?.firstName} ${provider?.lastName}
-• Tarif prestataire : ${provider?.pricingAmount || 0} FCFA
-
-💳 Facture ISD Services (commission 20%)
-Pour finaliser la mise en relation, veuillez régler la commission ISD :
-
-Montant : ${invoiceAmount} FCFA
-Mode de paiement : Mobile Money
-Numéro ISD : ${ISD_MOBILE_MONEY_NUMBER}
-
-📲 Une fois le paiement effectué, les coordonnées complètes des deux parties vous seront communiquées automatiquement.
-
-Référence : ISD-${req.params.offerId.toString().slice(-6).toUpperCase()}`,
-          type: "invoice",
-        });
-
-        // Notifier la famille (c'est elle qui doit payer)
-        await Notification.create({
-          userId: session.familyId,
-          title: "Facture ISD disponible",
-          message: `Un accord a été trouvé. Merci de régler ${invoiceAmount} FCFA via Mobile Money (${ISD_MOBILE_MONEY_NUMBER}) pour débloquer les coordonnées.`,
-          type: "system_alert",
-          metadata: { offerId: req.params.offerId, invoiceAmount },
-        });
-
-        const io = req.app.get("io");
-        if (io) {
-          io.to(`chat_${req.params.offerId}`).emit("new_message", savedMsg);
-          io.to(`chat_${req.params.offerId}`).emit("new_message", invoiceMsg);
-          io.to(`chat_${req.params.offerId}`).emit("invoice_sent", { invoiceAmount, session });
-        }
-
-        return res.json({ message: savedMsg, invoiceSent: true, session });
-      }
-
-      // Un seul accord pour l'instant
-      const agreeMsg = await ChatMessage.create({
-        offerId: req.params.offerId,
-        familyId: session.familyId,
-        providerId: session.providerId,
-        senderRole: "system",
-        message: senderRole === "family"
-          ? "✅ La famille a confirmé son accord. En attente de la confirmation du prestataire."
-          : "✅ Le prestataire a confirmé son accord. En attente de la confirmation de la famille.",
-        type: "system",
-      });
-
-      const io = req.app.get("io");
-      if (io) {
-        io.to(`chat_${req.params.offerId}`).emit("new_message", savedMsg);
-        io.to(`chat_${req.params.offerId}`).emit("new_message", agreeMsg);
-      }
-
-      return res.json({ message: savedMsg, partialAgreement: true });
-    }
-
-    // Émettre le message via socket
-    const io = req.app.get("io");
-    if (io) {
-      io.to(`chat_${req.params.offerId}`).emit("new_message", savedMsg);
-    }
-
-    return res.json({ message: savedMsg });
-  } catch (err) {
-    return res.status(500).json({ message: err.message });
-  }
-});
-
-// ================================
-// CONFIRMER PAIEMENT (admin/système)
-// Révèle les infos de contact + crée le Booking lié
-// ================================
-router.post("/confirm-payment/:offerId", auth, async (req, res) => {
-  try {
-    const session = await ChatSession.findOne({ offerId: req.params.offerId });
-    if (!session) return res.status(404).json({ message: "Session introuvable" });
-
-    const family = await User.findById(session.familyId);
-    const provider = await User.findById(session.providerId);
-    const offer = await Offer.findById(req.params.offerId);
-
-    session.isPaid = true;
-    session.status = "paid";
-    session.infoRevealed = true;
-    await session.save();
-
-    // Créer le Booking correspondant, pour qu'il apparaisse dans
-    // "Mes réservations" des deux côtés (famille et prestataire).
-    let booking = await Booking.findOne({ offerId: req.params.offerId });
-    if (!booking) {
-      booking = await Booking.create({
-        familyId: session.familyId,
-        providerId: session.providerId,
-        offerId: req.params.offerId,
-        serviceType: offer?.serviceType || provider?.serviceType || provider?.role,
-        subject: offer?.subjects?.length ? offer.subjects.join(", ") : undefined,
-        description: offer?.description || "Collaboration via offre ISD",
-        city: offer?.city || family?.city || provider?.city || "",
-        price: provider?.pricingAmount || offer?.price || 0,
-        status: "active",
-        startDate: session.startDate || null,
-        chatEnabled: true,
-        isPaid: true,
+      created.forEach((m) => chat.emitMessage(io, m));
+      if (session.status === "closed") chat.emitSession(io, session);
+      return res.status(200).json({
+        blocked: true,
+        warnings: count,
+        closed: session.status === "closed",
+        messages: created.map(chat.publicMessage),
+        session: chat.publicSession(session),
       });
     }
 
-    const startDateStr = session.startDate
-      ? new Date(session.startDate).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })
-      : "À convenir";
-
-    const revealMsg = await ChatMessage.create({
-      offerId: req.params.offerId,
-      familyId: session.familyId,
-      providerId: session.providerId,
-      senderRole: "system",
-      message: `✅ Paiement confirmé ! Voici les coordonnées des deux parties :
-
-👨‍👩‍👧 Famille :
-• Nom : ${family?.firstName} ${family?.lastName}
-• Téléphone : ${family?.phone}
-• Commune : ${family?.city}
-
-${(provider?.serviceType || provider?.role) === "nanny" ? "👩‍🍼 Nounou" : "📚 Répétiteur"} :
-• Nom : ${provider?.firstName} ${provider?.lastName}
-• Téléphone : ${provider?.phone}
-• Commune : ${provider?.city}
-
-📅 Date de début de collaboration : ${startDateStr}
-
-🎉 ISD Services vous souhaite une excellente collaboration !
-Pour toute assistance, contactez-nous.
-
-ℹ️ Vous pourrez rompre cette collaboration à tout moment depuis votre espace "Mes réservations" si besoin.`,
-      type: "info_reveal",
-    });
-
-    // Notifier les deux parties que les contacts sont révélés
-    await Notification.create({
-      userId: session.familyId,
-      title: "Coordonnées débloquées",
-      message: "Le paiement est confirmé. Les coordonnées du prestataire sont disponibles dans votre chat.",
-      type: "system_alert",
-      metadata: { offerId: req.params.offerId, bookingId: booking._id },
-    });
-    await Notification.create({
-      userId: session.providerId,
-      title: "Coordonnées débloquées",
-      message: "Le paiement de la famille est confirmé. Vos coordonnées mutuelles sont disponibles dans votre chat.",
-      type: "system_alert",
-      metadata: { offerId: req.params.offerId, bookingId: booking._id },
-    });
-
-    const io = req.app.get("io");
-    if (io) {
-      io.to(`chat_${req.params.offerId}`).emit("new_message", revealMsg);
-      io.to(`chat_${req.params.offerId}`).emit("payment_confirmed", { family, provider, booking });
-    }
-
-    return res.json({ message: "Paiement confirmé, infos révélées", revealMsg, booking });
-  } catch (err) {
-    return res.status(500).json({ message: err.message });
-  }
-});
-
-// ================================
-// ROMPRE LA COLLABORATION (après accord/paiement)
-// Accessible à la famille ou au prestataire
-// Synchronise aussi le Booking lié, s'il existe
-// ================================
-router.post("/end-collaboration/:offerId", auth, async (req, res) => {
-  try {
-    const session = await ChatSession.findOne({ offerId: req.params.offerId });
-    if (!session) return res.status(404).json({ message: "Session introuvable" });
-
-    const userId = req.user.id;
-    const isFamily = userId === session.familyId.toString();
-    const isProvider = userId === session.providerId.toString();
-
-    if (!isFamily && !isProvider) {
-      return res.status(403).json({ message: "Non autorisé" });
-    }
-
-    if (session.status === "closed") {
-      return res.status(400).json({ message: "Cette collaboration est déjà terminée" });
-    }
-
-    session.status = "closed";
+    const message = await ChatMessage.create({ ...base, senderRole: role, type: "text", message: text });
+    session.lastMessageAt = message.createdAt || new Date();
+    if (!session.lastReadAt) session.lastReadAt = {};
+    session.lastReadAt[role] = session.lastMessageAt;
     await session.save();
-
-    // Synchroniser le Booking lié, s'il existe
-    const booking = await Booking.findOne({ offerId: req.params.offerId });
-    if (booking && !["completed", "cancelled"].includes(booking.status)) {
-      booking.status = "cancelled";
-      await booking.save();
-    }
-
-    const initiatorLabel = isFamily ? "la famille" : "le prestataire";
-    const otherPartyId = isFamily ? session.providerId : session.familyId;
-
-    const endMsg = await ChatMessage.create({
-      offerId: req.params.offerId,
-      familyId: session.familyId,
-      providerId: session.providerId,
-      senderRole: "system",
-      message: `🔚 ${initiatorLabel.charAt(0).toUpperCase() + initiatorLabel.slice(1)} a mis fin à cette collaboration. Ce chat est désormais clos.`,
-      type: "system",
-    });
-
-    await Notification.create({
-      userId: otherPartyId,
-      title: "Collaboration terminée",
-      message: `${initiatorLabel.charAt(0).toUpperCase() + initiatorLabel.slice(1)} a mis fin à votre collaboration.`,
-      type: "system_alert",
-      metadata: { offerId: req.params.offerId },
-    });
-
-    const io = req.app.get("io");
-    if (io) {
-      io.to(`chat_${req.params.offerId}`).emit("new_message", endMsg);
-      io.to(`chat_${req.params.offerId}`).emit("collaboration_ended", { session });
-    }
-
-    return res.json({ message: "Collaboration terminée", session });
+    chat.emitMessage(io, message);
+    await notifyRecipient(io, session, role, text);
+    return res.status(201).json({ blocked: false, message: chat.publicMessage(message) });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return serverError(res, err);
   }
 });
 
 // ================================
-// RÉCUPÉRER MESSAGES
+// MESSAGES LUS
 // ================================
-router.get("/messages/:offerId", auth, async (req, res) => {
+router.post("/:offerId/read", auth, async (req, res) => {
   try {
-    const messages = await ChatMessage.find({ offerId: req.params.offerId })
-      .sort({ createdAt: 1 });
-    const session = await ChatSession.findOne({ offerId: req.params.offerId });
-    return res.json({ messages, session });
+    const { session, role } = await loadSession(req, res);
+    if (!session) return undefined;
+    const at = new Date();
+    if (!session.lastReadAt) session.lastReadAt = {};
+    session.lastReadAt[role] = at;
+    await session.save();
+    await Notification.updateMany(
+      { userId: req.user.id, type: "chat_message", isRead: false, "metadata.offerId": session.offerId },
+      { $set: { isRead: true } },
+    );
+    const io = req.app.get("io");
+    if (io) io.to(chat.room(session.offerId, chat.otherRole(role))).emit("chat:read", { offerId: String(session.offerId), role, at });
+    return res.json({ ok: true, at });
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    return serverError(res, err);
   }
 });
+
+// ================================
+// DATE DE DÉBUT : une partie propose, l'autre accepte ou refuse
+// ================================
+function readStartDate(v) {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return { error: "Date invalide (AAAA-MM-JJ)" };
+  const d = new Date(`${v}T00:00:00.000Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== v) return { error: "Date invalide" };
+  const today = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+  if (d < today) return { error: "La date de début ne peut pas être passée" };
+  const max = new Date(today.getTime() + START_DATE_MAX_DAYS * 86400000);
+  if (d > max) return { error: "Date trop lointaine (6 mois maximum)" };
+  return { value: d };
+}
+
+async function setCardStatus(io, messageId, status) {
+  if (!messageId) return;
+  const card = await ChatMessage.findByIdAndUpdate(messageId, { $set: { "meta.status": status } }, { new: true });
+  if (card) chat.emitMessage(io, { ...(typeof card.toObject === "function" ? card.toObject() : card), _updated: true });
+}
+
+router.post("/:offerId/start-date", auth, async (req, res) => {
+  try {
+    const d = readStartDate(req.body?.date);
+    if (d.error) return res.status(400).json({ message: d.error, errors: { date: d.error } });
+    const { session, role } = await loadSession(req, res);
+    if (!session) return undefined;
+    if (!ensureOpen(session, res)) return undefined;
+    if (session.startDate) return res.status(409).json({ message: "La date de début est déjà convenue." });
+    const io = req.app.get("io");
+
+    // Une proposition en cours (de l'une ou l'autre partie) est remplacée par la nouvelle.
+    if (session.startDateProposal?.messageId) await setCardStatus(io, session.startDateProposal.messageId, "replaced");
+
+    const card = await ChatMessage.create({
+      offerId: session.offerId, familyId: session.familyId, providerId: session.providerId,
+      senderRole: role, type: "start_date",
+      message: `Proposition de date de début : ${chat.formatDay(d.value)}`,
+      meta: { date: d.value, status: "pending" },
+    });
+    session.startDateProposal = { date: d.value, by: role, at: new Date(), messageId: card._id };
+    session.lastMessageAt = new Date();
+    await session.save();
+    chat.emitMessage(io, card);
+    chat.emitSession(io, session);
+    await notifyRecipient(io, session, role, `propose de commencer le ${chat.formatDay(d.value)}`);
+    return res.status(201).json({ message: chat.publicMessage(card), session: chat.publicSession(session) });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+router.post("/:offerId/start-date/respond", auth, async (req, res) => {
+  try {
+    const { accept } = req.body || {};
+    if (typeof accept !== "boolean") return res.status(400).json({ message: "Réponse invalide" });
+    const { session, role } = await loadSession(req, res);
+    if (!session) return undefined;
+    if (!ensureOpen(session, res)) return undefined;
+    const proposal = session.startDateProposal;
+    if (!proposal?.date) return res.status(409).json({ message: "Aucune date proposée." });
+    if (proposal.by === role) return res.status(403).json({ message: "C'est à l'autre partie de répondre à votre proposition." });
+    const io = req.app.get("io");
+    const proposerId = proposal.by === "family" ? session.familyId : session.providerId;
+    const day = chat.formatDay(proposal.date);
+
+    await setCardStatus(io, proposal.messageId, accept ? "accepted" : "declined");
+    let sys;
+    if (accept) {
+      session.startDate = proposal.date;
+      session.status = "agreement_reached";
+      sys = await chat.systemMessage(session,
+        `📅 Date de début convenue : ${day}.\n\nProchaine étape : le règlement de la facture ISD par Mobile Money. Vos coordonnées seront alors échangées automatiquement.`,
+        { meta: { kind: "start_date_confirmed", date: proposal.date } });
+      await chat.notify(proposerId, "Date de début confirmée 📅", `Le démarrage est fixé au ${day}.`, session.offerId);
+    } else {
+      sys = await chat.systemMessage(session, `La date du ${day} n'a pas été retenue. Proposez une autre date quand vous serez prêts.`);
+      await chat.notify(proposerId, "Date de début refusée", `La date du ${day} n'a pas été retenue. Proposez-en une autre dans le chat.`, session.offerId);
+    }
+    session.startDateProposal = { date: null, by: null, at: null, messageId: null };
+    session.lastMessageAt = new Date();
+    await session.save();
+    chat.emitMessage(io, sys);
+    chat.emitSession(io, session);
+    return res.json({ message: chat.publicMessage(sys), session: chat.publicSession(session) });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// ================================
+// PAIEMENT : désactivé jusqu'à la Phase 5 (vérification réelle du paiement Mobile Money)
+// ================================
+router.post("/confirm-payment/:offerId", auth, (req, res) =>
+  res.status(503).json({ message: "Le paiement Mobile Money arrive bientôt." }));
 
 module.exports = router;

@@ -94,13 +94,6 @@ app.get("/", (req, res) => {
   res.send("ISD Real-Time API 🚀");
 });
 
-// DEBUG SOCKET USERS
-app.get("/api/debug/online-users", (req, res) => {
-  res.json({
-    onlineUsers: Array.from(onlineUsers.entries()),
-  });
-});
-
 app.use(bodyErrorHandler);
 
 // =====================

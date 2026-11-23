@@ -4,6 +4,7 @@ const request = require("supertest");
 const Offer = require("../models/Offer");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
+const { ChatSession, ChatMessage } = require("../models/Chat");
 const { tokenFor, buildApp } = require("./helpers");
 
 const app = buildApp();
@@ -24,6 +25,9 @@ const fakeOffer = (extra = {}) => ({
 });
 const setup = (offer) => {
   mock.method(Offer, "findById", async () => offer);
+  mock.method(ChatSession, "findOne", async () => null);
+  mock.method(ChatSession, "create", async (d) => ({ ...d, _id: "chat" }));
+  mock.method(ChatMessage, "create", async (d) => d);
   return mock.method(Notification, "create", async () => ({}));
 };
 const as = (method, url, token, body) => {
@@ -321,5 +325,21 @@ describe("Candidatures créées avant la négociation", () => {
     const res = await as("post", `/api/offers/${OFFER_ID}/applications/${P1}/counter`, FAMILY, { amount: 45000 });
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.deepEqual(offer.applications[0].history.map((h) => h.by), ["provider", "family"]);
+  });
+});
+
+describe("Ouverture du chat à l'accord", () => {
+  afterEach(() => mock.restoreAll());
+
+  test("l'accord ouvre le chat ISD avec un message d'accueil", async () => {
+    const offer = fakeOffer({ applications: [application(P1)] });
+    setup(offer);
+    const create = mock.method(ChatSession, "create", async (d) => ({ ...d, _id: "chat" }));
+    const welcome = mock.method(ChatMessage, "create", async (d) => d);
+    const res = await as("post", `/api/offers/${OFFER_ID}/accept/${P1}`, FAMILY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(create.mock.callCount(), 1);
+    assert.equal(String(create.mock.calls[0].arguments[0].providerId), P1);
+    assert.equal(welcome.mock.calls[0].arguments[0].senderRole, "system");
   });
 });

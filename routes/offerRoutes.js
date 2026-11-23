@@ -1,5 +1,4 @@
 const express = require("express");
-const mongoose = require("mongoose");
 const router = express.Router();
 const auth = require("../middleware/authMiddleware");
 const Offer = require("../models/Offer");
@@ -342,25 +341,13 @@ router.post("/:offerId/accept/:providerId", auth, async (req, res) => {
     if (req.user.role !== "family") {
       return res.status(403).json({ message: "Réservé aux familles" });
     }
-    if (!mongoose.isValidObjectId(req.params.offerId) || !mongoose.isValidObjectId(req.params.providerId)) {
-      return res.status(400).json({ message: "Identifiant invalide" });
-    }
     const offer = await Offer.findById(req.params.offerId);
     if (!offer) return res.status(404).json({ message: "Offre introuvable" });
     if (offer.family.toString() !== req.user.id) {
       return res.status(403).json({ message: "Non autorisé" });
     }
-    if (offer.status !== "open") {
-      return res.status(400).json({ message: "Cette offre est fermée" });
-    }
 
     const acceptedProviderId = req.params.providerId;
-    const candidate = offer.applications.find(
-      (a) => a.provider.toString() === acceptedProviderId && a.status === "pending"
-    );
-    if (!candidate) {
-      return res.status(404).json({ message: "Candidature introuvable ou déjà traitée" });
-    }
     const rejectedProviderIds = [];
 
     offer.applications = offer.applications.map((a) => {
@@ -409,22 +396,12 @@ router.post("/:offerId/reject/:providerId", auth, async (req, res) => {
     if (req.user.role !== "family") {
       return res.status(403).json({ message: "Réservé aux familles" });
     }
-    if (!mongoose.isValidObjectId(req.params.offerId) || !mongoose.isValidObjectId(req.params.providerId)) {
-      return res.status(400).json({ message: "Identifiant invalide" });
-    }
     const offer = await Offer.findById(req.params.offerId);
     if (!offer) return res.status(404).json({ message: "Offre introuvable" });
-    // Seule la famille propriétaire de l'offre peut refuser ses candidatures.
-    if (offer.family.toString() !== req.user.id) {
-      return res.status(403).json({ message: "Non autorisé" });
-    }
     const app = offer.applications.find(
       (a) => a.provider.toString() === req.params.providerId
     );
     if (!app) return res.status(404).json({ message: "Candidature introuvable" });
-    if (app.status !== "pending") {
-      return res.status(400).json({ message: "Cette candidature a déjà été traitée" });
-    }
     app.status = "rejected";
     await offer.save();
 

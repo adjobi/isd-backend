@@ -135,7 +135,9 @@ exports.login = async (req, res) => {
 
     // ✅ VÉRIFICATION DU RÔLE
     // Si un rôle est fourni par le frontend, on vérifie qu'il correspond
-    if (role && user.role !== role) {
+    // Connexion « Équipe ISD » : n'importe quel profil, mais administrateur obligatoire (vérifié après le mot de passe).
+    const teamLogin = role === "team";
+    if (role && !teamLogin && user.role !== role) {
       return res.status(403).json({
         message: `Ce compte est un compte "${user.role}". Veuillez vous connecter depuis le bon profil.`,
         errors: { role: `Ce compte est un compte "${user.role}"` },
@@ -147,6 +149,12 @@ exports.login = async (req, res) => {
       return res.status(400).json({
         message: "Mot de passe incorrect",
         errors: { password: "Mot de passe incorrect" },
+      });
+    }
+    if (teamLogin && !user.isAdmin) {
+      return res.status(403).json({
+        message: "Accès réservé à l'équipe ISD.",
+        errors: { role: "Ce compte n'a pas les droits d'administration" },
       });
     }
 

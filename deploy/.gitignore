@@ -1,0 +1,4 @@
+.env
+site/
+site.new/
+backups/

@@ -98,6 +98,10 @@ function serializeForFamily(offer) {
 }
 
 // Conclut l'accord : candidature acceptée au prix sur la table, les autres refusées.
+// Un accord porte toujours sur un prix : sans lui, ni frais ISD justes ni contrat complet.
+const agreedPriceOf = (offer, app) => app.proposedPrice || offer.price || null;
+const NO_PRICE = { message: "Aucun prix n'est encore convenu : faites d'abord une proposition de prix." };
+
 async function conclude(offer, app, acceptedBy) {
   const providerId = idOf(app.provider);
   const rejected = [];
@@ -107,7 +111,7 @@ async function conclude(offer, app, acceptedBy) {
   }
   offer.status = "closed";
   offer.acceptedProvider = app.provider;
-  offer.agreedPrice = app.proposedPrice || offer.price || null;
+  offer.agreedPrice = agreedPriceOf(offer, app);
   offer.acceptedAt = new Date();
   await offer.save();
 
@@ -461,6 +465,7 @@ router.post("/:offerId/accept/:providerId", auth, async (req, res) => {
     if (turnOf(app, offer) !== "family") {
       return res.status(409).json({ message: "Votre dernière proposition attend la réponse du prestataire." });
     }
+    if (!agreedPriceOf(offer, app)) return res.status(409).json(NO_PRICE);
     await conclude(offer, app, "family");
     return res.json({ message: "Candidature acceptée", offer: serializeForFamily(offer) });
   } catch (err) {
@@ -483,6 +488,7 @@ router.post("/:id/accept-proposal", auth, async (req, res) => {
     if (turnOf(app, offer) !== "provider") {
       return res.status(409).json({ message: "Votre proposition attend la réponse de la famille." });
     }
+    if (!agreedPriceOf(offer, app)) return res.status(409).json(NO_PRICE);
     await conclude(offer, app, "provider");
     return res.json({ message: "Proposition acceptée", offer: serializeForProvider(offer, req.user.id) });
   } catch (err) {

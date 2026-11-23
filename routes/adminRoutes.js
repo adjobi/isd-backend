@@ -8,6 +8,7 @@ const Invoice = require("../models/Invoice");
 const Offer = require("../models/Offer");
 const User = require("../models/User");
 const Setting = require("../models/Setting");
+const AdminLog = require("../models/AdminLog");
 const chat = require("../services/chat");
 const payment = require("../services/payment");
 const { getPricing, validatePricing, launchActive } = require("../services/pricing");
@@ -24,6 +25,15 @@ router.param("invoiceId", (req, res, next, id) => {
 const serverError = (res, err) => {
   console.error("admin", err);
   return res.status(500).json({ message: "Erreur serveur. Réessayez dans un instant." });
+};
+
+// Journal d'audit : un échec d'écriture est signalé dans les logs sans annuler l'action.
+const audit = async (req, action, details = {}, invoice = null) => {
+  try {
+    await AdminLog.create({ admin: req.user.id, action, invoice, details, ip: req.ip || "" });
+  } catch (err) {
+    console.error("journal admin", action, err.message);
+  }
 };
 
 // Un administrateur ne valide jamais une facture qui le concerne.
@@ -58,6 +68,7 @@ router.post("/payments/:invoiceId/confirm", async (req, res) => {
     if (selfInvolved(invoice, req.user.id)) return res.status(403).json({ message: "Vous ne pouvez pas valider une facture qui vous concerne." });
     if (invoice.status !== "submitted") return res.status(409).json({ message: "Cette facture n'est pas en attente de vérification." });
     await payment.markPaid(invoice, { method: "manual", by: req.user.id, io: req.app.get("io") });
+    await audit(req, "payment_confirmed", { reference: invoice.reference, amount: invoice.amount }, invoice._id);
     return res.json({ message: "Paiement confirmé", status: invoice.status });
   } catch (err) {
     if (err?.name === "VersionError") return res.status(409).json({ message: "La facture vient d'être modifiée. Rechargez." });
@@ -78,6 +89,7 @@ router.post("/payments/:invoiceId/reject", async (req, res) => {
     invoice.verifiedBy = req.user.id;
     invoice.verifiedAt = new Date();
     await invoice.save();
+    await audit(req, "payment_rejected", { reference: invoice.reference, reason }, invoice._id);
     await chat.notify(invoice.family, "Paiement non confirmé", `Motif : ${reason}. Vérifiez votre transaction et déclarez-la à nouveau.`, invoice.offerId);
     return res.json({ message: "Déclaration refusée", status: invoice.status });
   } catch (err) {
@@ -111,8 +123,22 @@ router.put("/settings/pricing", async (req, res) => {
   try {
     const { value, errors } = validatePricing(req.body);
     if (errors) return res.status(400).json({ message: "Vérifiez les valeurs saisies", errors });
+    const before = await getPricing();
     await Setting.findOneAndUpdate({ key: "pricing" }, { $set: { value, updatedBy: req.user.id } }, { upsert: true, new: true });
+    await audit(req, "pricing_updated", { before: pricingView(before), after: value });
     return res.json(pricingView(await getPricing()));
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// ================================
+// JOURNAL DES ACTIONS (100 dernières)
+// ================================
+router.get("/logs", async (req, res) => {
+  try {
+    const logs = await AdminLog.find().sort({ createdAt: -1 }).limit(100).populate("admin", "firstName lastName email").lean();
+    return res.json({ logs });
   } catch (err) {
     return serverError(res, err);
   }

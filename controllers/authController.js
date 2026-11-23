@@ -1,6 +1,15 @@
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const throttle = require("../services/loginThrottle");
+
+// Durée des sessions : 7 jours pour l'app, 12 h pour l'Espace ISD (droits d'administration).
+const SESSION = "7d";
+const TEAM_SESSION = "12h";
+// Message unique : ne révèle jamais si l'email existe ou si c'est le mot de passe qui est faux.
+const BAD_CREDENTIALS = "Email ou mot de passe incorrect.";
+// Comparaison factice quand le compte n'existe pas : même temps de réponse (pas d'indice).
+const DUMMY_HASH = bcrypt.hashSync("isd-compte-inexistant", 10);
 
 // ===============================
 // REGISTER (CLEAN MARKETPLACE ISD)
@@ -74,7 +83,7 @@ exports.register = async (req, res) => {
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: SESSION }
     );
 
     return res.status(201).json({
@@ -99,7 +108,8 @@ exports.register = async (req, res) => {
     });
 
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    console.error("register", err);
+    return res.status(500).json({ message: "Inscription impossible pour le moment. Réessayez." });
   }
 };
 
@@ -124,31 +134,33 @@ exports.login = async (req, res) => {
     }
 
     const normalizedEmail = email.toLowerCase().trim();
+    const ip = req.ip || "inconnue";
 
-    const user = await User.findOne({ email: normalizedEmail });
-    if (!user) {
-      return res.status(404).json({
-        message: "Aucun compte ne correspond à cet email",
-        errors: { email: "Aucun compte ne correspond à cet email" },
+    // Trop de tentatives : on refuse sans même vérifier le mot de passe.
+    const wait = throttle.check(ip, normalizedEmail);
+    if (wait) {
+      res.set("Retry-After", String(wait));
+      return res.status(429).json({
+        message: `Trop de tentatives de connexion. Réessayez dans ${Math.ceil(wait / 60)} min.`,
       });
     }
+    throttle.attempt(ip);
 
-    // ✅ VÉRIFICATION DU RÔLE
-    // Si un rôle est fourni par le frontend, on vérifie qu'il correspond
-    // Connexion « Équipe ISD » : n'importe quel profil, mais administrateur obligatoire (vérifié après le mot de passe).
+    const user = await User.findOne({ email: normalizedEmail });
+    const match = await bcrypt.compare(String(password), user ? user.password : DUMMY_HASH);
+    if (!user || !match) {
+      throttle.failure(normalizedEmail);
+      return res.status(401).json({ message: BAD_CREDENTIALS });
+    }
+    throttle.success(normalizedEmail);
+
+    // Le profil et les droits ne sont indiqués qu'après un mot de passe correct.
+    // Connexion « Équipe ISD » : n'importe quel profil, mais administrateur obligatoire.
     const teamLogin = role === "team";
     if (role && !teamLogin && user.role !== role) {
       return res.status(403).json({
         message: `Ce compte est un compte "${user.role}". Veuillez vous connecter depuis le bon profil.`,
         errors: { role: `Ce compte est un compte "${user.role}"` },
-      });
-    }
-
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      return res.status(400).json({
-        message: "Mot de passe incorrect",
-        errors: { password: "Mot de passe incorrect" },
       });
     }
     if (teamLogin && !user.isAdmin) {
@@ -161,7 +173,7 @@ exports.login = async (req, res) => {
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: teamLogin ? TEAM_SESSION : SESSION }
     );
 
     return res.json({
@@ -186,6 +198,7 @@ exports.login = async (req, res) => {
     });
 
   } catch (err) {
-    return res.status(500).json({ message: err.message });
+    console.error("login", err);
+    return res.status(500).json({ message: "Connexion impossible pour le moment. Réessayez." });
   }
 };

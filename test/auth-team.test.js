@@ -4,6 +4,7 @@ const request = require("supertest");
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const { buildApp } = require("./helpers");
+const throttle = require("../services/loginThrottle");
 
 const app = buildApp();
 const HASH = bcrypt.hashSync("Demo1234", 4);
@@ -11,7 +12,7 @@ const user = (extra) => ({ _id: "64b0000000000000000000a1", email: "a@isd.ci", r
 const login = (body) => request(app).post("/api/auth/login").send(body);
 
 describe("Connexion « Équipe ISD »", () => {
-  afterEach(() => mock.restoreAll());
+  afterEach(() => { mock.restoreAll(); throttle.reset(); });
 
   test("administrateur : connexion acceptée quel que soit son profil", async () => {
     mock.method(User, "findOne", async () => user({ isAdmin: true, role: "tutor" }));
@@ -31,7 +32,7 @@ describe("Connexion « Équipe ISD »", () => {
   test("mauvais mot de passe : refusé avant toute indication sur les droits", async () => {
     mock.method(User, "findOne", async () => user({ isAdmin: true }));
     const res = await login({ email: "a@isd.ci", password: "Faux1234", role: "team" });
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 401);
     assert.equal(res.body.token, undefined);
   });
 

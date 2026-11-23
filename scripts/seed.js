@@ -67,8 +67,8 @@ const USERS = [
       serviceType: "nanny", duration: "long", price: 0, city: "Abidjan",
       description: "[démo] Nous cherchons une nounou pour nos 2 enfants (3 et 6 ans), du lundi au vendredi de 7h à 18h à Cocody.",
       applications: [
-        { provider: byEmail["aya.nounou@demo.isd"]._id, status: "pending" },
-        { provider: byEmail["fatou.nounou@demo.isd"]._id, status: "pending" },
+        { provider: byEmail["aya.nounou@demo.isd"]._id, status: "pending", proposedPrice: 60000, lastOfferBy: "provider", history: [{ by: "provider", amount: 60000 }] },
+        { provider: byEmail["fatou.nounou@demo.isd"]._id, status: "pending", proposedPrice: 45000, lastOfferBy: "provider", history: [{ by: "provider", amount: 45000 }] },
       ],
     },
     {

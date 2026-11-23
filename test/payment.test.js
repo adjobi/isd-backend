@@ -6,6 +6,7 @@ const Contract = require("../models/Contract");
 const Offer = require("../models/Offer");
 const User = require("../models/User");
 const Setting = require("../models/Setting");
+const AdminLog = require("../models/AdminLog");
 const Notification = require("../models/Notification");
 const { ChatSession, ChatMessage } = require("../models/Chat");
 const { computeFee, validatePricing, DEFAULT_PRICING } = require("../services/pricing");
@@ -172,6 +173,7 @@ describe("Validation par un administrateur", () => {
   });
 
   test("confirmer : facture réglée, contrat créé, chat débloqué, parties prévenues", async () => {
+    const logs = mock.method(AdminLog, "create", async (d) => d);
     users();
     const invoice = fakeInvoice({ status: "submitted" });
     mock.method(Invoice, "findById", async () => invoice);
@@ -184,7 +186,11 @@ describe("Validation par un administrateur", () => {
     assert.equal(contract.mock.callCount(), 1);
     assert.equal(session.isPaid, true);
     assert.equal(notifs.mock.callCount(), 2);
+    assert.equal(logs.mock.callCount(), 1);
+    assert.equal(logs.mock.calls[0].arguments[0].action, "payment_confirmed");
+    assert.equal(String(logs.mock.calls[0].arguments[0].admin), ADMIN_ID);
     assert.equal((await as("post", `/api/admin/payments/${INVOICE_ID}/confirm`, ADMIN)).status, 409);
+    assert.equal(logs.mock.callCount(), 1);
   });
 
   test("un administrateur ne valide pas une facture qui le concerne (403)", async () => {
@@ -194,6 +200,7 @@ describe("Validation par un administrateur", () => {
   });
 
   test("refuser : motif obligatoire, famille prévenue", async () => {
+    const logs = mock.method(AdminLog, "create", async (d) => d);
     users();
     const invoice = fakeInvoice({ status: "submitted" });
     mock.method(Invoice, "findById", async () => invoice);
@@ -203,9 +210,12 @@ describe("Validation par un administrateur", () => {
     assert.equal(res.status, 200);
     assert.equal(invoice.status, "rejected");
     assert.equal(String(notifs.mock.calls[0].arguments[0].userId), FAMILY_ID);
+    assert.equal(logs.mock.calls[0].arguments[0].action, "payment_rejected");
+    assert.equal(logs.mock.calls[0].arguments[0].details.reason, "Transaction introuvable sur le compte Wave");
   });
 
   test("tarifs : lecture et mise à jour validée", async () => {
+    const logs = mock.method(AdminLog, "create", async (d) => d);
     users();
     mock.method(Setting, "findOne", () => q(null));
     const res = await as("get", "/api/admin/settings/pricing", ADMIN);
@@ -215,6 +225,9 @@ describe("Validation par un administrateur", () => {
     const ok = await as("put", "/api/admin/settings/pricing", ADMIN, { ratePercent: 15, minFee: 2000, shortFlat: 2000, launchDiscountPercent: 0, guaranteeDays: 30, launchUntil: null });
     assert.equal(ok.status, 200);
     assert.equal(upsert.mock.calls[0].arguments[1].$set.value.rate, 0.15);
+    assert.equal(logs.mock.callCount(), 1);
+    assert.equal(logs.mock.calls[0].arguments[0].action, "pricing_updated");
+    assert.equal(logs.mock.calls[0].arguments[0].details.before.ratePercent, 20);
   });
 });
 

@@ -8,7 +8,13 @@ const { validateProfile } = require("../validators/profile");
 // ======================
 // AUTH PUBLIC
 // ======================
-router.post("/register", register);
+// Inscriptions limitées par adresse IP (contre la création de comptes en masse).
+const registerLimiter = require("../middleware/rateLimit")({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  message: "Trop d'inscriptions depuis cette connexion. Réessayez dans une heure.",
+});
+router.post("/register", registerLimiter, register);
 router.post("/login", login);
 
 // ======================
@@ -66,3 +72,4 @@ router.put("/profile", authMiddleware, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.registerLimiter = registerLimiter;

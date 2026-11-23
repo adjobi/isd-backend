@@ -19,8 +19,8 @@ const fakeOffer = (overrides = {}) => {
     family: id(OWNER_ID),
     status: "open",
     applications: [
-      { provider: id(P1), status: "pending", toObject() { return { provider: P1, status: this.status }; } },
-      { provider: id(P2), status: "pending", toObject() { return { provider: P2, status: this.status }; } },
+      { provider: id(P1), status: "pending", proposedPrice: 50000, toObject() { return { provider: P1, status: this.status }; } },
+      { provider: id(P2), status: "pending", proposedPrice: 45000, toObject() { return { provider: P2, status: this.status }; } },
     ],
     saved: false,
     async save() { this.saved = true; },
@@ -99,6 +99,20 @@ describe("POST /api/offers/:offerId/accept/:providerId", () => {
     assert.equal(res.status, 200);
     assert.equal(offer.status, "closed");
     assert.deepEqual(offer.applications.map((a) => a.status), ["accepted", "rejected"]);
+  });
+
+  test("refuse un accord sans prix convenu (409)", async () => {
+    const offer = fakeOffer();
+    offer.applications[0].proposedPrice = null;
+    mock.method(Offer, "findById", async () => offer);
+    const notify = mock.method(Notification, "create", async () => ({}));
+    const res = await request(app)
+      .post(`/api/offers/${OFFER_ID}/accept/${P1}`)
+      .set("Authorization", `Bearer ${tokenFor(OWNER_ID, "family")}`);
+    assert.equal(res.status, 409);
+    assert.match(res.body.message, /prix/);
+    assert.equal(offer.status, "open");
+    assert.equal(notify.mock.callCount(), 0);
   });
 
   test("une autre famille ne peut pas accepter (403)", async () => {

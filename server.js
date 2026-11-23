@@ -6,6 +6,14 @@ const { Server } = require("socket.io");
 
 dotenv.config();
 
+// Configuration vérifiée avant tout : en production, on refuse de démarrer si elle est dangereuse.
+const { checkEnv, corsOrigins, isProd } = require("./config/env");
+const envProblems = checkEnv();
+if (envProblems.length) {
+  envProblems.forEach((p) => console.error("❌ Configuration :", p));
+  if (isProd()) process.exit(1);
+}
+
 const connectDB = require("./config/db");
 const { jsonParsers, bodyErrorHandler } = require("./middleware/bodyParsing");
 
@@ -39,12 +47,16 @@ const initSocket = require("./socket/socketManager");
 connectDB();
 
 const app = express();
+app.disable("x-powered-by");
+// Derrière le proxy HTTPS (Caddy) : l'adresse IP réelle du visiteur sert aux limites de tentatives.
+if (process.env.TRUST_PROXY) app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
 
 // =====================
 // MIDDLEWARES
 // =====================
+const allowedOrigins = corsOrigins();
 app.use(cors({
-  origin: "*",
+  origin: allowedOrigins,
   methods: ["GET", "POST", "PUT", "DELETE"]
 }));
 
@@ -60,7 +72,7 @@ const server = http.createServer(app);
 // =====================
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: allowedOrigins,
   },
 });
 
@@ -96,6 +108,12 @@ app.use("/api/admin", adminRoutes);
 // =====================
 app.get("/", (req, res) => {
   res.send("ISD Real-Time API 🚀");
+});
+
+// Santé du service (surveillance, redémarrage automatique) : API et base joignables.
+app.get("/api/health", (req, res) => {
+  const dbUp = require("mongoose").connection.readyState === 1;
+  res.status(dbUp ? 200 : 503).json({ status: dbUp ? "ok" : "base indisponible" });
 });
 
 app.use(bodyErrorHandler);

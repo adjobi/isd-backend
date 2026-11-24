@@ -21,6 +21,7 @@ const buildApp = () => {
   app.use("/api/chat", require("../routes/chatRoutes"));
   app.use("/api/payments", require("../routes/paymentRoutes"));
   app.use("/api/actions", require("../routes/actionRoutes"));
+  app.use("/api/public", require("../routes/publicRoutes"));
   app.use("/api/admin", require("../routes/adminRoutes"));
   app.use(bodyErrorHandler);
   return app;

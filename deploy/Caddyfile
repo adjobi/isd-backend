@@ -1,4 +1,5 @@
-# Serveur web : HTTPS automatique (Let's Encrypt), site + API sur le même domaine.
+# Serveur web : HTTPS automatique (Let's Encrypt). Sur le même domaine :
+# le site vitrine (/), l'application web (/app/) et l'API (/api, /socket.io).
 {
 	email {$ACME_EMAIL}
 }
@@ -21,14 +22,32 @@
 		reverse_proxy api:5000
 	}
 
-	# Fichiers du site versionnés (nom unique) : mis en cache longtemps
-	@static path /_expo/* /assets/*
-	header @static Cache-Control "public, max-age=31536000, immutable"
+	# Application : fichiers versionnés (nom unique) mis en cache longtemps
+	@app_static path /app/_expo/* /app/assets/*
+	header @app_static Cache-Control "public, max-age=31536000, immutable"
+	# Vitrine : styles et scripts (adresse versionnée par ?v=), images
+	@site_static path /assets/*
+	header @site_static Cache-Control "public, max-age=604800"
 
-	# Site web (application Expo exportée) ; toute autre adresse renvoie l'application
+	redir /app /app/ 308
+
+	# Application web (Expo) sous /app/ ; toute adresse de l'app renvoie l'application
+	handle /app/* {
+		root * /srv/site
+		try_files {path} /app/index.html
+		file_server
+	}
+
+	# Site vitrine (pages statiques) à la racine
 	handle {
 		root * /srv/site
-		try_files {path} /index.html
+		try_files {path} {path}/index.html
+		file_server
+	}
+
+	handle_errors 404 {
+		root * /srv/site
+		rewrite * /404.html
 		file_server
 	}
 }

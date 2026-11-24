@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Met ISD à jour sur le serveur : récupère le code, recompile le site, redémarre l'API.
+# Met ISD à jour sur le serveur : récupère le code, recompile l'app et le site vitrine, redémarre l'API.
 # Usage (depuis le dossier deploy) :  sudo ./update.sh          (avec git pull)
 #                                     sudo ./update.sh --no-pull (code déjà à jour)
 # Les données (base, sauvegardes, certificats) ne sont jamais touchées.
@@ -20,12 +20,20 @@ if [ "${1:-}" != "--no-pull" ]; then
   git -C "$MOBILE_DIR" pull --ff-only
 fi
 
-echo "== Compilation du site pour https://$DOMAIN (quelques minutes)"
+echo "== Compilation de l'application web pour https://$DOMAIN/app/ (quelques minutes)"
 mkdir -p site site.new
+find site.new -mindepth 1 -delete
 docker run --rm \
   -v "$MOBILE_DIR":/app -v "$DEPLOY_DIR/site.new":/out -w /app \
-  -e EXPO_PUBLIC_API_URL="https://$DOMAIN" -e CI=1 \
-  node:20 sh -c "npm ci --no-audit --no-fund && npx expo export -p web --clear --output-dir /out"
+  -e EXPO_PUBLIC_API_URL="https://$DOMAIN" -e EXPO_BASE_URL=/app -e CI=1 \
+  node:20 sh -c "npm ci --no-audit --no-fund && npx expo export -p web --clear --output-dir /out/app"
+
+echo "== Génération du site vitrine (accueil, pages par commune)"
+docker run --rm \
+  -v "$MOBILE_DIR":/app:ro -v "$DEPLOY_DIR/site.new":/out -w /app \
+  -e SITE_URL="https://$DOMAIN" -e APP_URL=/app/ -e VITRINE_OUT=/out \
+  node:20 node vitrine/build.mjs
+
 # Remplacement du site en une fois (le serveur web lit le même dossier).
 rsync -a --delete site.new/ site/
 

@@ -4,7 +4,8 @@ Tout tourne sur **un seul serveur** : le site web, l'API, la base de données,
 le certificat HTTPS (automatique et gratuit) et une sauvegarde quotidienne.
 
 ```
-Internet ──HTTPS──▶ Caddy ──┬── /            → site (application exportée)
+Internet ──HTTPS──▶ Caddy ──┬── /            → site vitrine (pages statiques : accueil, communes, FAQ)
+                            ├── /app/        → application web (Expo exportée)
                             └── /api, /socket.io → API Node ──▶ MongoDB (non exposée)
                                                      sauvegarde quotidienne → deploy/backups
 ```
@@ -63,14 +64,14 @@ Le script demande le domaine, l'email et le numéro Mobile Money d'ISD, puis :
 
 ## 4. Créer le compte administrateur
 
-1. Sur le site, inscrivez-vous normalement avec l'adresse de l'équipe (ex. `equipe@votre-domaine.com`),
+1. Sur l'application (`https://votre-domaine/app/`), inscrivez-vous normalement avec l'adresse de l'équipe (ex. `equipe@votre-domaine.com`),
    de préférence **différente de votre compte personnel**.
 2. Sur le serveur, donnez-lui les droits :
    ```bash
    cd /opt/isd/isd-backend/deploy
    sudo docker compose exec api node scripts/make-admin.js equipe@votre-domaine.com --production
    ```
-3. Sur le site : accueil → « Équipe ISD » → connexion.
+3. Sur l'application (`/app/`) : accueil → « Équipe ISD » → connexion.
 
 Retirer les droits : même commande avec `--remove`.
 Les données de démonstration (`npm run seed`) **ne peuvent pas** être chargées en production : le script le refuse.
@@ -118,3 +119,11 @@ puis `sudo docker compose up -d`. L'adresse de notification est automatiquement
   HTTPS ne peut pas être obtenu avant). Vérifiez `sudo docker compose logs caddy`, attendez, relancez `sudo ./update.sh --no-pull`.
 - **« Configuration : … » dans les journaux de l'API** : une valeur de `deploy/.env` manque ou est invalide.
 - **Compilation du site interrompue (mémoire)** : le serveur a moins de 2 Go ; `install.sh` ajoute 2 Go d'échange, vérifiez avec `free -h`.
+
+## Le site vitrine et Google
+
+Le site vitrine (`isd-mobile/vitrine`) est régénéré à chaque `update.sh` : accueil, une page par
+commune pour les nounous et les répétiteurs, questions fréquentes, `sitemap.xml` et `robots.txt`.
+Après la mise en ligne, déclarez le site dans **Google Search Console** (gratuit) et envoyez
+`https://votre-domaine/sitemap.xml` : les pages « Nounou à Cocody », « Répétiteur à Yopougon »…
+pourront alors apparaître dans les recherches Google.

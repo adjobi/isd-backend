@@ -64,6 +64,11 @@ router.put("/profile", authMiddleware, async (req, res) => {
       .select("-password")
       .lean();
     if (!user) return res.status(404).json({ message: "Compte introuvable" });
+    // Photo antérieure à la date de version : on la date maintenant pour son adresse publique.
+    if (user.photo && !user.photoUpdatedAt) {
+      user.photoUpdatedAt = new Date();
+      await User.updateOne({ _id: user._id }, { $set: { photoUpdatedAt: user.photoUpdatedAt } });
+    }
     return res.json({ message: "Profil mis à jour", user: { ...user, id: user._id } });
   } catch (err) {
     console.error("PUT /auth/profile", err);

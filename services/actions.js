@@ -6,6 +6,8 @@ const Invoice = require("../models/Invoice");
 const Contract = require("../models/Contract");
 const User = require("../models/User");
 const { ChatSession } = require("../models/Chat");
+const MissionReview = require("../models/MissionReview");
+const { reviewOpensAt } = require("./reviews");
 
 const idOf = (v) => String(v?._id || v);
 const shortName = (u) => (u ? [u.firstName, u.lastName ? `${u.lastName[0]}.` : ""].filter(Boolean).join(" ") : "");
@@ -15,8 +17,10 @@ const formatDay = (d) => new Date(d).toLocaleDateString("fr-FR", { weekday: "lon
 // Ordre d'affichage : ce qui bloque l'autre partie ou engage de l'argent d'abord.
 const PRIORITY = {
   end_response: 1, payment_rejected: 2, payment: 3, notice_confirm: 4, engagements: 5,
-  applications: 6, counter_offer: 6, start_date_reply: 7, start_date_propose: 8,
+  applications: 6, counter_offer: 6, start_date_reply: 7, start_date_propose: 8, review: 9,
 };
+// On propose de donner son avis pendant 60 jours, sans relancer ensuite.
+const REVIEW_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 
 async function pendingActions(userId, tokenRole) {
   const me = String(userId);
@@ -24,7 +28,7 @@ async function pendingActions(userId, tokenRole) {
   const actions = [];
   const add = (a) => actions.push({ ...a, id: `${a.kind}:${a.params.offerId}`, priority: PRIORITY[a.kind] });
 
-  const [offers, sessions, invoices, contracts] = await Promise.all([
+  const [offers, sessions, invoices, contracts, confirmed] = await Promise.all([
     isFamily
       ? Offer.find({ family: me, status: "open" }).select("description applications updatedAt").lean()
       : Offer.find({ status: "open", "applications.provider": me }).select("description family applications updatedAt").lean(),
@@ -33,13 +37,28 @@ async function pendingActions(userId, tokenRole) {
     isFamily ? Invoice.find({ family: me, status: { $in: ["pending", "rejected"] } }).select("offerId status amount reference updatedAt").lean() : [],
     Contract.find({ [isFamily ? "family" : "provider"]: me, $or: [{ endedAt: null }, { endedAt: { $gt: new Date() } }] })
       .select("offerId family provider acceptedAt terms.noticeDays terms.noticeSetBy termination endedAt updatedAt").lean(),
+    // Missions sur lesquelles la famille peut donner son avis
+    isFamily
+      ? Contract.find({ family: me, "acceptedAt.family": { $ne: null }, "acceptedAt.provider": { $ne: null } })
+        .select("offerId provider acceptedAt terms.startDate endedAt").lean()
+      : [],
   ]);
+  const now = Date.now();
+  const reviewable = confirmed.filter((c) => {
+    const opens = reviewOpensAt(c)?.getTime();
+    return opens && opens <= now && now - opens < REVIEW_WINDOW_MS;
+  });
+  const reviewed = reviewable.length
+    ? new Set((await MissionReview.find({ contractId: { $in: reviewable.map((c) => c._id) } }).select("contractId").lean()).map((r) => idOf(r.contractId)))
+    : new Set();
+  const toReview = reviewable.filter((c) => !reviewed.has(idOf(c)));
 
   // Noms et descriptions utiles aux libellés, en deux requêtes
   const offerIds = new Set([...sessions.map((s) => idOf(s.offerId)), ...invoices.map((i) => idOf(i.offerId)), ...contracts.map((c) => idOf(c.offerId))]);
   const userIds = new Set([
     ...sessions.map((s) => idOf(isFamily ? s.providerId : s.familyId)),
     ...contracts.map((c) => idOf(isFamily ? c.provider : c.family)),
+    ...toReview.map((c) => idOf(c.provider)),
     ...offers.filter((o) => o.family).map((o) => idOf(o.family)),
   ]);
   const [offerDocs, users] = await Promise.all([
@@ -126,6 +145,15 @@ async function pendingActions(userId, tokenRole) {
         cta: "Confirmer", route: "Mission",
       });
     }
+  }
+
+  // Avis sur la mission (famille)
+  for (const c of toReview) {
+    add({
+      kind: "review", params: { offerId: idOf(c.offerId) }, at: reviewOpensAt(c),
+      title: `Comment se passe la mission avec ${nameOf(c.provider)} ?`,
+      text: "Votre avis aide les autres familles à choisir. Il ne prend qu'une minute.", cta: "Donner mon avis", route: "Mission",
+    });
   }
 
   return actions.sort((a, b) => a.priority - b.priority || new Date(b.at) - new Date(a.at));

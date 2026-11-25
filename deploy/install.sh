@@ -38,11 +38,13 @@ else
   read -rp "   Nom de domaine du site (ex. isd-ci.com, sans www) : " DOMAIN
   read -rp "   Email de contact pour le certificat HTTPS : " ACME_EMAIL
   read -rp "   Numéro Mobile Money d'ISD (ex. +2250700000000) : " ISD_NUMBER
+  read -rp "   Numéro WhatsApp d'ISD pour le site (ex. 2250700000000, vide pour aucun) : " WHATSAPP_ISD
   umask 077
   cat > .env <<EOF
 DOMAIN=${DOMAIN}
 ACME_EMAIL=${ACME_EMAIL}
 ISD_MOBILE_MONEY_NUMBER=${ISD_NUMBER}
+WHATSAPP_ISD=${WHATSAPP_ISD}
 MONGO_PASSWORD=$(openssl rand -hex 24)
 JWT_SECRET=$(openssl rand -hex 64)
 # Ne JAMAIS changer après la mise en ligne : les messages bloqués du chat deviendraient illisibles.

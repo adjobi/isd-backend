@@ -9,11 +9,13 @@ const Offer = require("../models/Offer");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
 const Report = require("../models/Report");
+const MissionReview = require("../models/MissionReview");
 const { ChatSession } = require("../models/Chat");
 const chat = require("../services/chat");
 const payment = require("../services/payment");
 const cinetpay = require("../services/cinetpay");
 const engagement = require("../services/engagement");
+const reviews = require("../services/reviews");
 const { containsChatContact } = require("../validators/contact");
 
 const OPERATORS = ["wave", "orange", "mtn", "moov"];
@@ -280,12 +282,58 @@ const handleConcurrency = (res, err) => {
   return serverError(res, err);
 };
 
+// Avis de la famille sur la mission (visible aussi par le prestataire).
+const serializeReview = (r) => (r ? { rating: r.rating, comment: r.comment, status: r.status, createdAt: r.createdAt, updatedAt: r.updatedAt } : null);
+async function reviewState(contract) {
+  const opensAt = reviews.reviewOpensAt(contract);
+  // Engagements pas encore confirmés : aucun avis possible, rien à chercher.
+  const review = opensAt ? await MissionReview.findOne({ contractId: contract._id }).lean() : null;
+  return { review: serializeReview(review), reviewOpensAt: opensAt, canReview: reviews.canReview(contract) };
+}
+
 router.get("/:offerId/contract", auth, async (req, res) => {
   try {
     const { invoice, role, contract } = await loadContract(req, res);
     if (!contract) return undefined;
-    return res.json({ contract: serializeContract(contract, invoice), role });
+    return res.json({ contract: serializeContract(contract, invoice), role, ...(await reviewState(contract)) });
   } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// Donner (ou corriger) son avis : famille uniquement, après une semaine de mission ou à sa fin.
+router.put("/:offerId/review", auth, async (req, res) => {
+  try {
+    const { role, contract } = await loadContract(req, res);
+    if (!contract) return undefined;
+    if (role !== "family") return res.status(403).json({ message: "Seule la famille peut donner un avis sur la mission." });
+    if (!reviews.canReview(contract)) {
+      return res.status(409).json({ message: `Vous pourrez donner votre avis après ${reviews.REVIEW_AFTER_DAYS} jours de mission.` });
+    }
+    const input = reviews.readReview(req.body);
+    if (input.errors) return res.status(400).json({ message: Object.values(input.errors)[0], errors: input.errors });
+    const existing = await MissionReview.findOne({ contractId: contract._id });
+    if (existing?.status === "hidden") {
+      return res.status(409).json({ message: "Cet avis a été retiré par l'équipe ISD. Contactez-nous pour en parler." });
+    }
+    const provider = await User.findById(contract.provider).select("role serviceType").lean();
+    const review = existing || new MissionReview({
+      contractId: contract._id, offerId: contract.offerId, family: contract.family, provider: contract.provider,
+      serviceType: provider?.serviceType || (provider?.role === "tutor" ? "tutor" : "nanny"),
+    });
+    review.rating = input.rating;
+    review.comment = input.comment;
+    await review.save();
+    await reviews.refreshProviderRating(contract.provider);
+    if (!existing) {
+      await Notification.create({
+        userId: contract.provider, type: "system_alert", title: "Nouvel avis sur votre profil",
+        message: `La famille vous a donné ${input.rating} étoile${input.rating > 1 ? "s" : ""}.`, metadata: { offerId: contract.offerId },
+      }).catch(() => {});
+    }
+    return res.status(existing ? 200 : 201).json({ review: serializeReview(review) });
+  } catch (err) {
+    if (err?.code === 11000) return res.status(409).json({ message: "Votre avis vient d'être enregistré. Rechargez la page." });
     return serverError(res, err);
   }
 });

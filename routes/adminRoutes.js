@@ -10,6 +10,8 @@ const User = require("../models/User");
 const Setting = require("../models/Setting");
 const AdminLog = require("../models/AdminLog");
 const Report = require("../models/Report");
+const MissionReview = require("../models/MissionReview");
+const { refreshProviderRating } = require("../services/reviews");
 const { REASON_LABELS } = require("../services/engagement");
 const chat = require("../services/chat");
 const payment = require("../services/payment");
@@ -20,6 +22,11 @@ const STATUSES = ["submitted", "pending", "paid", "rejected", "waived"];
 router.use(auth, adminOnly);
 
 router.param("reportId", (req, res, next, id) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });
+  return next();
+});
+
+router.param("reviewId", (req, res, next, id) => {
   if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });
   return next();
 });
@@ -176,6 +183,41 @@ router.post("/reports/:reportId/handle", async (req, res) => {
     return serverError(res, err);
   }
 });
+
+// ================================
+// AVIS DES FAMILLES (modération : publiés d'office, masquables avec motif)
+// ================================
+router.get("/reviews", async (req, res) => {
+  try {
+    const status = req.query.status === "hidden" ? "hidden" : "published";
+    const list = await MissionReview.find({ status }).sort({ createdAt: -1 }).limit(100)
+      .populate("family", "firstName lastName").populate("provider", "firstName lastName role")
+      .populate("moderation.by", "firstName lastName").lean();
+    const hidden = await MissionReview.countDocuments({ status: "hidden" });
+    return res.json({ status, hidden, reviews: list });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+async function moderateReview(req, res, toStatus) {
+  const note = typeof req.body?.note === "string" ? req.body.note.trim().replace(/\s+/g, " ") : "";
+  if (note.length < 5 || note.length > 300) return res.status(400).json({ message: "Indiquez le motif en 5 à 300 caractères", errors: { note: "5 à 300 caractères" } });
+  const review = await MissionReview.findById(req.params.reviewId);
+  if (!review) return res.status(404).json({ message: "Avis introuvable" });
+  if (review.status === toStatus) return res.status(409).json({ message: toStatus === "hidden" ? "Cet avis est déjà masqué." : "Cet avis est déjà publié." });
+  if ([String(review.family), String(review.provider)].includes(String(req.user.id))) {
+    return res.status(403).json({ message: "Vous êtes concerné par cet avis : un autre membre de l'équipe doit s'en occuper." });
+  }
+  review.status = toStatus;
+  review.moderation = { by: req.user.id, at: new Date(), note };
+  await review.save();
+  await refreshProviderRating(review.provider);
+  await audit(req, toStatus === "hidden" ? "review_hidden" : "review_shown", { reviewId: String(review._id), rating: review.rating, note });
+  return res.json({ review });
+}
+router.post("/reviews/:reviewId/hide", (req, res) => moderateReview(req, res, "hidden").catch((err) => serverError(res, err)));
+router.post("/reviews/:reviewId/show", (req, res) => moderateReview(req, res, "published").catch((err) => serverError(res, err)));
 
 // ================================
 // JOURNAL DES ACTIONS (100 dernières)

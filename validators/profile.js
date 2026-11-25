@@ -79,7 +79,7 @@ function readPhoto(v, errors) {
   return `data:image/${isPng ? "png" : "jpeg"};base64,${m[2]}`;
 }
 
-const PROVIDER_ONLY = ["skills", "values", "pricingType", "pricingAmount", "availability"];
+const PROVIDER_ONLY = ["skills", "values", "pricingType", "pricingAmount", "availability", "photoPublic"];
 
 function validateProfile(body, role) {
   const errors = {};
@@ -101,11 +101,18 @@ function validateProfile(body, role) {
   if (has("city")) updates.city = readText(body.city, { field: "city", min: 2, max: 60, label: "La ville", errors });
   if (has("commune")) updates.commune = readText(body.commune, { field: "commune", min: 0, max: 60, label: "La commune", errors });
   if (has("bio")) updates.bio = readText(body.bio, { field: "bio", min: 0, max: BIO_MAX, label: "La présentation", errors });
-  if (has("photo")) updates.photo = readPhoto(body.photo, errors);
+  if (has("photo")) {
+    updates.photo = readPhoto(body.photo, errors);
+    if (updates.photo !== undefined) updates.photoUpdatedAt = updates.photo ? new Date() : null;
+  }
 
   if (isProvider) {
     if (has("skills")) updates.skills = readList(body.skills, { field: "skills", label: "Compétences", errors });
     if (has("values")) updates.values = readList(body.values, { field: "values", label: "Valeurs", errors });
+    if (has("photoPublic")) {
+      if (typeof body.photoPublic === "boolean") updates.photoPublic = body.photoPublic;
+      else errors.photoPublic = "Valeur invalide";
+    }
     if (has("availability")) {
       if (AVAILABILITY.includes(body.availability)) updates.availability = body.availability;
       else errors.availability = "Disponibilité invalide";

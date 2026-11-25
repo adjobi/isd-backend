@@ -11,6 +11,7 @@ cd "$DEPLOY_DIR"
 
 if [ ! -f .env ]; then echo "deploy/.env manquant : lancez d'abord install.sh"; exit 1; fi
 DOMAIN="$(grep '^DOMAIN=' .env | cut -d= -f2-)"
+WHATSAPP_ISD="$(grep '^WHATSAPP_ISD=' .env | cut -d= -f2- || true)"
 if [ -z "$DOMAIN" ]; then echo "DOMAIN manquant dans deploy/.env"; exit 1; fi
 if [ ! -d "$MOBILE_DIR" ]; then echo "Application introuvable : $MOBILE_DIR (clonez isd-mobile à côté d'isd-backend)"; exit 1; fi
 
@@ -31,7 +32,7 @@ docker run --rm \
 echo "== Génération du site vitrine (accueil, pages par commune)"
 docker run --rm \
   -v "$MOBILE_DIR":/app:ro -v "$DEPLOY_DIR/site.new":/out -w /app \
-  -e SITE_URL="https://$DOMAIN" -e APP_URL=/app/ -e VITRINE_OUT=/out \
+  -e SITE_URL="https://$DOMAIN" -e APP_URL=/app/ -e VITRINE_OUT=/out -e WHATSAPP="$WHATSAPP_ISD" \
   node:20 node vitrine/build.mjs
 
 # Remplacement du site en une fois (le serveur web lit le même dossier).

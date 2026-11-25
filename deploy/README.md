@@ -127,3 +127,8 @@ commune pour les nounous et les répétiteurs, questions fréquentes, `sitemap.x
 Après la mise en ligne, déclarez le site dans **Google Search Console** (gratuit) et envoyez
 `https://votre-domaine/sitemap.xml` : les pages « Nounou à Cocody », « Répétiteur à Yopougon »…
 pourront alors apparaître dans les recherches Google.
+
+**Avant d'ouvrir au public**, complétez `isd-mobile/vitrine/legal.json` (raison sociale, RCCM, adresse,
+email, hébergeur, déclaration ARTCI…), faites relire les trois pages légales par un juriste, puis passez
+`"valide": true` et relancez `update.sh` : le bandeau « Brouillon » disparaît et les pages entrent dans le
+plan du site. Pour afficher le bouton WhatsApp, renseignez `WHATSAPP_ISD` dans `deploy/.env` (ex. `2250700000000`).

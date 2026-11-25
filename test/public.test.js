@@ -31,7 +31,8 @@ describe("Vitrine publique", () => {
     const p = res.body.providers[0];
     assert.equal(p.firstName, "Adjoua");
     assert.equal(p.initial, "K");
-    for (const k of ["phone", "email", "photo", "lastName"]) assert.equal(p[k], undefined, k);
+    for (const k of ["phone", "email", "lastName"]) assert.equal(p[k], undefined, k);
+    assert.equal(p.photo, null, "photo sans accord");
     assert.ok(!JSON.stringify(res.body).includes("0701020304"));
     assert.deepEqual(filter.role, { $in: ["nanny"] });
     assert.ok(filter.commune.test("Cocody"));

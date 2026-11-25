@@ -20,6 +20,8 @@ const userSchema = new mongoose.Schema(
     city: { type: String, required: true },           // ville
     commune: { type: String, default: "" },             // ✅ commune d'habitation
     photo: { type: String, default: "" },                // ✅ photo de profil (base64 ou URL)
+    photoUpdatedAt: { type: Date, default: null },       // version de la photo (adresse publique)
+    photoPublic: { type: Boolean, default: false },      // prestataire : accepte que sa photo soit visible sur le site public
     bio: { type: String, default: "" },                  // description du profil
     values: { type: [String], default: [] },             // ✅ valeurs (ex: ponctualité, bienveillance)
     skills: { type: [String], default: [] },              // ✅ compétences (premiers secours, cuisine, etc.)
@@ -36,7 +38,8 @@ const userSchema = new mongoose.Schema(
     // MARKETPLACE STATUS
     // ======================
     availability: { type: String, enum: ["available", "busy", "away", "holiday"], default: "available" },
-    rating: { type: Number, default: 0 },
+    rating: { type: Number, default: 0 },               // moyenne des avis publiés des familles
+    reviewCount: { type: Number, default: 0 },
     isVerified: { type: Boolean, default: false },
     isProfileCompleted: { type: Boolean, default: false },
     lastLogin: { type: Date, default: null },

@@ -2,6 +2,7 @@
 # Première installation d'ISD sur un serveur Ubuntu (22.04 ou 24.04) neuf.
 # À lancer depuis le dossier deploy :  sudo ./install.sh
 # - installe Docker, Git, le pare-feu et un fichier d'échange (swap)
+# - sécurise le serveur (harden.sh) et programme la copie chiffrée des sauvegardes hors serveur
 # - crée deploy/.env avec des secrets générés aléatoirement (une seule fois)
 # - compile le site et démarre tous les services (via update.sh)
 set -euo pipefail
@@ -12,9 +13,9 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-echo "== 1/4 Logiciels (Docker, Git, pare-feu)"
+echo "== 1/4 Logiciels (Docker, Git, pare-feu, rclone)"
 apt-get update -qq
-apt-get install -y -qq docker.io docker-compose-v2 git ufw rsync openssl curl >/dev/null
+apt-get install -y -qq docker.io docker-compose-v2 git ufw rsync openssl curl rclone >/dev/null
 systemctl enable --now docker
 
 echo "== 2/4 Pare-feu : seuls SSH, HTTP et HTTPS sont ouverts"
@@ -23,6 +24,8 @@ ufw allow 80/tcp >/dev/null
 ufw allow 443/tcp >/dev/null
 ufw allow 443/udp >/dev/null
 ufw --force enable >/dev/null
+# Mises à jour de sécurité automatiques, fail2ban, SSH par clé uniquement (si une clé est installée).
+./harden.sh
 
 # La compilation du site demande de la mémoire : 2 Go d'échange sur les petits serveurs.
 if ! swapon --show | grep -q .; then
@@ -54,6 +57,19 @@ CINETPAY_SITE_ID=
 EOF
   echo "   deploy/.env créé (lisible par root uniquement). Gardez-en une copie en lieu sûr."
 fi
+# Copie chiffrée des sauvegardes hors du serveur (ajoutée aussi aux installations existantes).
+if ! grep -q '^BACKUP_PASSPHRASE=' .env; then
+  {
+    echo "# Copie hors serveur : nom du stockage rclone (ex. isd-offsite:sauvegardes-isd), vide = désactivée."
+    echo "BACKUP_REMOTE="
+    echo "# Chiffre les copies hors serveur. Sans elle, ces copies sont illisibles : gardez-la avec ce fichier."
+    echo "BACKUP_PASSPHRASE=$(openssl rand -hex 32)"
+  } >> .env
+fi
+chmod 600 .env
+printf '%s\n' "# ISD : copie chiffrée des sauvegardes hors du serveur, chaque nuit" \
+  "30 4 * * * root $(pwd)/offsite.sh >> /var/log/isd-offsite.log 2>&1" > /etc/cron.d/isd-offsite
+chmod 644 /etc/cron.d/isd-offsite
 mkdir -p site backups
 
 echo "== 4/4 Compilation du site et démarrage"

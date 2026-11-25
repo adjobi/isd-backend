@@ -10,6 +10,20 @@ const userSchema = new mongoose.Schema(
     // Droits d'administration ISD (validation des paiements, tarifs).
     // Jamais modifiable depuis l'app : uniquement par scripts/make-admin.js.
     isAdmin: { type: Boolean, default: false },
+    // Double authentification (code de l'application d'authentification), obligatoire pour l'Espace ISD.
+    twoFactorEnabled: { type: Boolean, default: false },
+    // Secrets : jamais renvoyés par les requêtes (select: false), clé chiffrée (AES-256-GCM).
+    twoFactor: {
+      type: new mongoose.Schema({
+        secret: String,          // clé active, chiffrée
+        pendingSecret: String,   // clé en cours d'activation, chiffrée
+        lastStep: { type: Number, default: -1 }, // dernier code utilisé (pas de rejeu)
+        recoveryCodes: { type: [String], default: [] }, // codes de secours, hachés (SHA-256)
+        enabledAt: Date,
+      }, { _id: false }),
+      default: undefined,
+      select: false,
+    },
 
     // ======================
     // PROFILE COMMON

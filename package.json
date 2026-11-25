@@ -7,7 +7,8 @@
     "dev": "nodemon server.js",
     "test": "node --test test/",
     "seed": "node scripts/seed.js",
-    "make-admin": "node scripts/make-admin.js"
+    "make-admin": "node scripts/make-admin.js",
+    "reset-2fa": "node scripts/reset-2fa.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -16,6 +17,7 @@
     "express": "^4.22.3",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.24.0",
+    "qrcode": "^1.5.4",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {

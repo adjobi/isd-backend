@@ -15,6 +15,7 @@ const buildApp = () => {
   const { jsonParsers, bodyErrorHandler } = require("../middleware/bodyParsing");
   jsonParsers(app);
   app.use("/api/auth", require("../routes/authRoutes"));
+  app.use("/api/auth", require("../routes/twoFactorRoutes"));
   app.use("/api/nannies", require("../routes/nannyRoutes"));
   app.use("/api/offers", require("../routes/offerRoutes"));
   app.use("/api/notifications", require("../routes/notificationRoutes"));

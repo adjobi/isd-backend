@@ -13,8 +13,22 @@
 		X-Frame-Options "DENY"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Cross-Origin-Opener-Policy "same-origin"
 		-Server
 	}
+
+	# Politique de sécurité du contenu (CSP) : seuls les scripts du site lui-même s'exécutent.
+	# Un script injecté (faille, extension malveillante, lien piégé) est bloqué par le navigateur.
+	# Site vitrine : polices Google, aucune ligne de script en ligne.
+	@site not path /app /app/* /api/* /socket.io/*
+	header @site Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+	# Application web : styles générés par React Native Web (en ligne), photos en data:/blob:,
+	# temps réel par WebSocket sur le même domaine.
+	@app path /app /app/*
+	header @app Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' wss://{$DOMAIN} data: blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
+	# API : ne renvoie jamais de page à exécuter.
+	@api_csp path /api/* /socket.io/*
+	header @api_csp Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
 
 	# API et temps réel → serveur Node
 	@api path /api/* /socket.io/*

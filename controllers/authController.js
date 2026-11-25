@@ -2,6 +2,7 @@ const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const throttle = require("../services/loginThrottle");
+const twoFactor = require("../services/twoFactor");
 
 // Durée des sessions : 7 jours pour l'app, 12 h pour l'Espace ISD (droits d'administration).
 const SESSION = "7d";
@@ -170,35 +171,93 @@ exports.login = async (req, res) => {
       });
     }
 
-    const token = jwt.sign(
-      { id: user._id, role: user.role },
-      process.env.JWT_SECRET,
-      { expiresIn: teamLogin ? TEAM_SESSION : SESSION }
-    );
+    // Double authentification active : le mot de passe ne suffit pas, on demande le code
+    // (quel que soit le profil choisi : le compte peut avoir les droits d'administration).
+    if (user.twoFactorEnabled) {
+      return res.json({
+        twoFactorRequired: true,
+        challenge: twoFactor.signChallenge(user, { team: teamLogin }),
+        message: "Saisissez le code de votre application d'authentification.",
+      });
+    }
 
-    return res.json({
-      message: "Connexion réussie",
-      token,
-      user: {
-        id: user._id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        role: user.role,
-        phone: user.phone,
-        city: user.city,
-        serviceType: user.serviceType,
-        pricingType: user.pricingType,
-        pricingAmount: user.pricingAmount,
-        subjects: user.subjects,
-        availability: user.availability,
-        isProfileCompleted: user.isProfileCompleted,
-        isAdmin: !!user.isAdmin,
-      },
-    });
+    return res.json(session(user, { team: teamLogin }));
 
   } catch (err) {
     console.error("login", err);
+    return res.status(500).json({ message: "Connexion impossible pour le moment. Réessayez." });
+  }
+};
+
+// Jeton de session et profil renvoyés à l'app après une connexion réussie.
+// `mfa` : le code de double authentification a été vérifié (exigé pour l'Espace ISD).
+function session(user, { team = false, mfa = false } = {}) {
+  const token = jwt.sign(
+    { id: user._id, role: user.role, ...(mfa ? { mfa: true } : {}) },
+    process.env.JWT_SECRET,
+    { expiresIn: team ? TEAM_SESSION : SESSION }
+  );
+  return {
+    message: "Connexion réussie",
+    token,
+    user: {
+      id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      role: user.role,
+      phone: user.phone,
+      city: user.city,
+      serviceType: user.serviceType,
+      pricingType: user.pricingType,
+      pricingAmount: user.pricingAmount,
+      subjects: user.subjects,
+      availability: user.availability,
+      isProfileCompleted: user.isProfileCompleted,
+      isAdmin: !!user.isAdmin,
+      twoFactorEnabled: !!user.twoFactorEnabled,
+    },
+  };
+}
+exports.session = session;
+
+// ===============================
+// LOGIN : ÉTAPE « CODE » (double authentification)
+// ===============================
+exports.loginTwoFactor = async (req, res) => {
+  try {
+    const challenge = twoFactor.readChallenge(req.body?.challenge);
+    if (!challenge) {
+      return res.status(401).json({ message: "Délai dépassé : reconnectez-vous avec votre mot de passe.", code: "CHALLENGE_EXPIRED" });
+    }
+    const user = await twoFactor.loadSecrets(challenge.id);
+    if (!user) return res.status(401).json({ message: "Délai dépassé : reconnectez-vous avec votre mot de passe.", code: "CHALLENGE_EXPIRED" });
+
+    const ip = req.ip || "inconnue";
+    const wait = throttle.check(ip, user.email);
+    if (wait) {
+      res.set("Retry-After", String(wait));
+      return res.status(429).json({ message: `Trop de codes faux. Réessayez dans ${Math.ceil(wait / 60)} min.` });
+    }
+    throttle.attempt(ip);
+
+    const via = await twoFactor.checkCode(user, req.body?.code);
+    if (!via) {
+      throttle.failure(user.email);
+      return res.status(401).json({ message: "Code incorrect ou déjà utilisé.", errors: { code: "Code incorrect ou déjà utilisé" } });
+    }
+    throttle.success(user.email);
+
+    const full = await User.findById(user._id);
+    const out = session(full, { team: challenge.team, mfa: true });
+    if (via === "recovery") {
+      const left = (user.twoFactor.recoveryCodes || []).length - 1;
+      out.recoveryCodesLeft = left;
+      out.message = `Connexion réussie avec un code de secours (il en reste ${left}).`;
+    }
+    return res.json(out);
+  } catch (err) {
+    console.error("login 2fa", err);
     return res.status(500).json({ message: "Connexion impossible pour le moment. Réessayez." });
   }
 };

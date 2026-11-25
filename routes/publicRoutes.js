@@ -9,6 +9,7 @@ const MissionReview = require("../models/MissionReview");
 const { shortName } = require("../services/reviews");
 const { getPricing, launchActive } = require("../services/pricing");
 const { containsChatContact } = require("../validators/contact");
+const { recordVisit } = require("../services/audience");
 
 const SERVICES = ["nanny", "tutor"];
 const publicLimiter = require("../middleware/rateLimit")({ windowMs: 60 * 1000, max: 120, message: "Trop de requêtes. Réessayez dans une minute." });
@@ -145,6 +146,16 @@ router.get("/reviews", async (req, res) => {
 });
 
 // Chiffres réels pour la vitrine : prestataires par service et par commune, tarifs ISD.
+// Mesure d'audience anonyme (site vitrine et app) : sans cookie, sans IP conservée.
+router.post("/visit", async (req, res) => {
+  try {
+    await recordVisit({ body: req.body, ip: req.ip || "", ua: req.get("user-agent") || "", host: req.get("host") });
+  } catch (err) {
+    console.error("POST /public/visit", err.message);
+  }
+  return res.status(204).end();
+});
+
 router.get("/summary", async (req, res) => {
   try {
     const data = await cached("summary", async () => {

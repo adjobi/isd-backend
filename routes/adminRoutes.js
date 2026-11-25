@@ -16,10 +16,22 @@ const { REASON_LABELS } = require("../services/engagement");
 const chat = require("../services/chat");
 const payment = require("../services/payment");
 const { getPricing, validatePricing, launchActive } = require("../services/pricing");
+const stats = require("../services/stats");
 
 const STATUSES = ["submitted", "pending", "paid", "rejected", "waived"];
 
 router.use(auth, adminOnly);
+
+// Tableau de bord : audience, inscriptions, rétention, mises en relation, paiements, qualité.
+router.get("/stats", async (req, res) => {
+  try {
+    const period = Object.keys(stats.PERIODS).includes(req.query.period) ? req.query.period : "30d";
+    return res.json(await stats.dashboard(period));
+  } catch (err) {
+    console.error("GET /admin/stats", err);
+    return res.status(500).json({ message: "Statistiques indisponibles pour le moment. Réessayez." });
+  }
+});
 
 router.param("reportId", (req, res, next, id) => {
   if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });

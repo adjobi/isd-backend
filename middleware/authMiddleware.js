@@ -1,4 +1,5 @@
 const jwt = require("jsonwebtoken");
+const { touchUser } = require("../services/audience");
 
 module.exports = (req, res, next) => {
   try {
@@ -17,6 +18,7 @@ module.exports = (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     req.user = decoded;
+    touchUser(decoded); // activité du jour (rétention), une écriture par compte et par jour
 
     next();
   } catch (error) {

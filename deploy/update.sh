@@ -32,13 +32,13 @@ find site.new -mindepth 1 -delete
 docker run --rm \
   -v "$MOBILE_DIR":/app -v "$DEPLOY_DIR/site.new":/out -w /app \
   -e EXPO_PUBLIC_API_URL="https://$DOMAIN" -e EXPO_BASE_URL=/app -e CI=1 \
-  node:20 sh -c "npm ci --no-audit --no-fund && npx expo export -p web --clear --output-dir /out/app"
+  node:22 sh -c "npm ci --no-audit --no-fund && npx expo export -p web --clear --output-dir /out/app"
 
 echo "== Génération du site vitrine (accueil, pages par commune)"
 docker run --rm \
   -v "$MOBILE_DIR":/app:ro -v "$DEPLOY_DIR/site.new":/out -w /app \
   -e SITE_URL="https://$DOMAIN" -e APP_URL=/app/ -e VITRINE_OUT=/out -e WHATSAPP="$WHATSAPP_ISD" \
-  node:20 node vitrine/build.mjs
+  node:22 node vitrine/build.mjs
 
 # Remplacement du site en une fois (le serveur web lit le même dossier).
 rsync -a --delete site.new/ site/

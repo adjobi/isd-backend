@@ -15,17 +15,11 @@ const PRICING_BY_ROLE = {
 const AVAILABILITY = ["available", "busy", "away", "holiday"];
 
 // ---------- Coordonnées cachées dans du texte libre ----------
-// Les coordonnées ne sont communiquées qu'après paiement : on refuse
-// téléphone, email, liens et réseaux sociaux dans les textes publics.
-const CONTACT_PATTERNS = [
-  /(?:\+?\d[\s.\-/]?){8,}/,                                      // numéro de téléphone (8 chiffres ou plus)
-  /[^\s@]+@[^\s@]+\.[a-z]{2,}/i,                                 // email
-  /(?:https?:\/\/|www\.)/i,                                      // lien
-  /\b[a-z0-9-]+\.(?:com|ci|net|org|fr|me|io|ly|co|app)\b/i,      // nom de domaine
-  /\b(?:whats\s*app|wa\.me|facebook|fb\.com|instagram|insta|tiktok|snap\s*chat|snap|telegram|t\.me|messenger|linkedin|twitter)\b/i,
-  /(?:^|\s)@[a-z0-9_.]{3,}/i,                                    // pseudo @...
-];
-const containsContact = (text) => CONTACT_PATTERNS.some((re) => re.test(text));
+// Les coordonnées ne sont communiquées qu'après paiement : on refuse téléphone, email, liens
+// et réseaux sociaux dans les textes publics, avec le même détecteur que le chat
+// (validators/contact.js), qui déjoue les déguisements (Unicode, épellation, nombres en lettres…).
+const { containsChatContact } = require("./contact");
+const containsContact = (text) => containsChatContact(text);
 const CONTACT_MESSAGE = "Pas de téléphone, email, lien ni réseau social ici : vos coordonnées sont partagées après paiement de la facture ISD.";
 
 // ---------- Lecteurs ----------

@@ -13,7 +13,15 @@ const Report = require("../models/Report");
 const MissionReview = require("../models/MissionReview");
 const SupportRequest = require("../models/SupportRequest");
 const Notification = require("../models/Notification");
-const { TOPIC_LABELS } = require("./supportRoutes");
+const { TOPIC_LABELS, cleanText, contactInfo } = require("./supportRoutes");
+const { containsChatContact } = require("../validators/contact");
+
+// Textes de l'équipe envoyés aux utilisateurs : aucune coordonnée, sauf celles d'ISD.
+function hasForeignContact(text) {
+  const isd = contactInfo();
+  return containsChatContact(text, { allowPhones: [isd.whatsapp], allowEmails: [isd.email], allowIsdWhatsapp: true });
+}
+const CONTACT_REFUSED = "Texte refusé : il contient des coordonnées (téléphone, email, lien ou réseau social). Seules celles d'ISD sont permises.";
 const { refreshProviderRating } = require("../services/reviews");
 const { REASON_LABELS } = require("../services/engagement");
 const chat = require("../services/chat");
@@ -114,6 +122,7 @@ router.post("/payments/:invoiceId/reject", async (req, res) => {
   try {
     const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
     if (reason.length < 5 || reason.length > 200) return res.status(400).json({ message: "Indiquez le motif (5 à 200 caractères)", errors: { reason: "5 à 200 caractères" } });
+    if (hasForeignContact(reason)) return res.status(400).json({ message: CONTACT_REFUSED, errors: { reason: "Retirez les coordonnées" } });
     const invoice = await Invoice.findById(req.params.invoiceId);
     if (!invoice) return res.status(404).json({ message: "Facture introuvable" });
     if (selfInvolved(invoice, req.user.id)) return res.status(403).json({ message: "Vous ne pouvez pas traiter une facture qui vous concerne." });
@@ -186,6 +195,7 @@ router.post("/reports/:reportId/handle", async (req, res) => {
   try {
     const note = typeof req.body?.note === "string" ? req.body.note.trim().replace(/\s+/g, " ") : "";
     if (note.length < 10 || note.length > 500) return res.status(400).json({ message: "Résumez la suite donnée en 10 à 500 caractères", errors: { note: "10 à 500 caractères" } });
+    if (hasForeignContact(note)) return res.status(400).json({ message: CONTACT_REFUSED, errors: { note: "Retirez les coordonnées" } });
     const report = await Report.findById(req.params.reportId);
     if (!report) return res.status(404).json({ message: "Signalement introuvable" });
     if (report.status === "handled") return res.status(409).json({ message: "Ce signalement est déjà traité." });
@@ -207,13 +217,18 @@ router.post("/reports/:reportId/handle", async (req, res) => {
 // ================================
 // MESSAGES DES UTILISATEURS (« Aide et contact »)
 // ================================
+const SUPPORT_USER = ["user", "firstName lastName phone email role city commune"];
+const SUPPORT_REPLIER = ["reply.by", "firstName lastName"];
+const serializeSupport = (r) => ({ ...r, topicLabel: TOPIC_LABELS[r.topic] });
+
 router.get("/support", async (req, res) => {
   try {
     const status = req.query.status === "answered" ? "answered" : "open";
     const list = await SupportRequest.find({ status }).sort({ createdAt: status === "open" ? 1 : -1 }).limit(100)
-      .populate("user", "firstName lastName phone email role city commune").populate("reply.by", "firstName lastName").lean();
+      .populate(...SUPPORT_USER).populate(...SUPPORT_REPLIER).lean();
+    // Compteur des demandes en attente, quel que soit l'onglet affiché.
     const open = await SupportRequest.countDocuments({ status: "open" });
-    return res.json({ status, open, requests: list.map((r) => ({ ...r, topicLabel: TOPIC_LABELS[r.topic] })) });
+    return res.json({ status, open, requests: list.map(serializeSupport) });
   } catch (err) {
     return serverError(res, err);
   }
@@ -221,22 +236,38 @@ router.get("/support", async (req, res) => {
 
 router.post("/support/:supportId/reply", async (req, res) => {
   try {
-    const text = typeof req.body?.text === "string" ? req.body.text.trim().replace(/[ \t]+/g, " ") : "";
+    const text = cleanText(req.body?.text);
     if (text.length < 2 || text.length > 1000) return res.status(400).json({ message: "Réponse de 2 à 1000 caractères", errors: { text: "2 à 1000 caractères" } });
-    const request = await SupportRequest.findById(req.params.supportId);
-    if (!request) return res.status(404).json({ message: "Demande introuvable" });
-    if (String(request.user) === String(req.user.id)) {
-      return res.status(403).json({ message: "C'est votre propre demande : un autre membre de l'équipe doit y répondre." });
+    // Aucune coordonnée (téléphone, email, lien, réseau social) dans une réponse de l'équipe,
+    // sauf celles d'ISD : une famille ne doit jamais obtenir ainsi le contact d'un prestataire.
+    if (hasForeignContact(text)) {
+      return res.status(400).json({
+        message: "Réponse refusée : elle contient des coordonnées (téléphone, email, lien ou réseau social). Seules celles d'ISD sont permises.",
+        errors: { text: "Retirez les coordonnées" },
+      });
     }
-    request.reply = { text, by: req.user.id, at: new Date() };
-    request.status = "answered";
-    await request.save();
+    // Mise à jour atomique : une seule réponse par demande, jamais sur sa propre demande
+    // (deux membres de l'équipe qui répondent en même temps : le second reçoit 409).
+    const request = await SupportRequest.findOneAndUpdate(
+      { _id: req.params.supportId, status: "open", user: { $ne: req.user.id } },
+      { $set: { status: "answered", reply: { text, by: req.user.id, at: new Date() } } },
+      { new: true }
+    ).populate(...SUPPORT_USER).populate(...SUPPORT_REPLIER).lean();
+    if (!request) {
+      const existing = await SupportRequest.findById(req.params.supportId).select("user status").lean();
+      if (!existing) return res.status(404).json({ message: "Demande introuvable" });
+      if (String(existing.user) === String(req.user.id)) {
+        return res.status(403).json({ message: "C'est votre propre demande : un autre membre de l'équipe doit y répondre." });
+      }
+      return res.status(409).json({ message: "Cette demande a déjà reçu une réponse." });
+    }
+    const userId = request.user?._id || request.user;
     await Notification.create({
-      userId: request.user, type: "system_alert", title: "Réponse de l'équipe ISD",
+      userId, type: "system_alert", title: "Réponse de l'équipe ISD",
       message: text.length > 140 ? `${text.slice(0, 139)}…` : text, metadata: { support: String(request._id) },
     }).catch((e) => console.error("notification support", e.message));
-    await audit(req, "support_replied", { supportId: String(request._id), topic: request.topic });
-    return res.json({ request });
+    await audit(req, "support_replied", { supportId: String(request._id), userId: String(userId), topic: request.topic, textLength: text.length });
+    return res.json({ request: serializeSupport(request) });
   } catch (err) {
     return serverError(res, err);
   }
@@ -261,6 +292,7 @@ router.get("/reviews", async (req, res) => {
 async function moderateReview(req, res, toStatus) {
   const note = typeof req.body?.note === "string" ? req.body.note.trim().replace(/\s+/g, " ") : "";
   if (note.length < 5 || note.length > 300) return res.status(400).json({ message: "Indiquez le motif en 5 à 300 caractères", errors: { note: "5 à 300 caractères" } });
+  if (hasForeignContact(note)) return res.status(400).json({ message: CONTACT_REFUSED, errors: { note: "Retirez les coordonnées" } });
   const review = await MissionReview.findById(req.params.reviewId);
   if (!review) return res.status(404).json({ message: "Avis introuvable" });
   if (review.status === toStatus) return res.status(409).json({ message: toStatus === "hidden" ? "Cet avis est déjà masqué." : "Cet avis est déjà publié." });

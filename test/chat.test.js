@@ -54,9 +54,26 @@ describe("Détection des coordonnées dans le chat", () => {
       assert.ok(containsChatContact(t), t);
     }
   });
+  test("déjoue les contournements : Unicode, invisibles, homoglyphes, épellation, leet, mélanges", () => {
+    for (const t of ["07/09/10/25/24", "(07) 09 10 25 24", "07,09,10,25,24", "07_09_10_25_24", "０７０９１０２５２４", "٠٧٠٩١٠٢٥٢٤",
+      "0\u200b7\u200b09102524", "O7 O9 1O 25 24", "zéro sept 09 dix 25 vingt-quatre", "07/09/2010 25 24", "jean (at) gmail (dot) com",
+      "w h a t s a p p", "what’s app", "whats-app", "wh4tsapp", "faceb00k", "f.a.c.e.b.o.o.k", "g m a i l", "fасеbооk", "ｗｈａｔｓａｐｐ",
+      "t.me/jean", "wa.me/2250709", "jean.ci"]) {
+      assert.ok(containsChatContact(t), t);
+    }
+  });
+  test("coordonnées d'ISD autorisées seulement si demandé (réponses de l'équipe)", () => {
+    const isd = { allowPhones: ["2250709102524"], allowEmails: ["contact@isd.ci"], allowIsdWhatsapp: true };
+    assert.equal(containsChatContact("Écrivez-nous sur notre WhatsApp : +225 07 09 10 25 24", isd), false);
+    assert.equal(containsChatContact("ou par email contact@isd.ci", isd), false);
+    assert.ok(containsChatContact("Écrivez-nous sur notre WhatsApp : +225 07 09 10 25 24"));
+    for (const t of ["Son numéro : 05 44 33 22 11", "Voici son whatsapp", "écrivez à awa@gmail.com"]) assert.ok(containsChatContact(t, isd), t);
+  });
   test("laisse passer dates, prix, âges et horaires", () => {
     for (const t of ["Je peux commencer le 01/12/2026 à 7h30", "60 000 FCFA par mois, c’est bien", "Mes enfants ont 3 et 6 ans",
-      "On se voit à 8h, puis 12h30 pour le déjeuner", "J’habite à Cocody, près du lycée", "Deux enfants, un de trois ans"]) {
+      "On se voit à 8h, puis 12h30 pour le déjeuner", "J’habite à Cocody, près du lycée", "Deux enfants, un de trois ans",
+      "J’habite à Cocody. Me voici", "60 000, 70 000 ou 80 000 FCFA selon les heures", "Le 12/01/2027, de 8:30 à 12:30, puis 14:00",
+      "Elle a 2 filles de 5 et 9 ans, et un garçon de 11 ans", "Facture ISD-K7P2QX réglée"]) {
       assert.equal(containsChatContact(t), false, t);
     }
   });

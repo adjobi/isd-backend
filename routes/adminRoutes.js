@@ -11,6 +11,9 @@ const Setting = require("../models/Setting");
 const AdminLog = require("../models/AdminLog");
 const Report = require("../models/Report");
 const MissionReview = require("../models/MissionReview");
+const SupportRequest = require("../models/SupportRequest");
+const Notification = require("../models/Notification");
+const { TOPIC_LABELS } = require("./supportRoutes");
 const { refreshProviderRating } = require("../services/reviews");
 const { REASON_LABELS } = require("../services/engagement");
 const chat = require("../services/chat");
@@ -34,6 +37,11 @@ router.get("/stats", async (req, res) => {
 });
 
 router.param("reportId", (req, res, next, id) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });
+  return next();
+});
+
+router.param("supportId", (req, res, next, id) => {
   if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });
   return next();
 });
@@ -191,6 +199,44 @@ router.post("/reports/:reportId/handle", async (req, res) => {
     await report.save();
     await audit(req, "report_handled", { reportId: String(report._id), note });
     return res.json({ report });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// ================================
+// MESSAGES DES UTILISATEURS (« Aide et contact »)
+// ================================
+router.get("/support", async (req, res) => {
+  try {
+    const status = req.query.status === "answered" ? "answered" : "open";
+    const list = await SupportRequest.find({ status }).sort({ createdAt: status === "open" ? 1 : -1 }).limit(100)
+      .populate("user", "firstName lastName phone email role city commune").populate("reply.by", "firstName lastName").lean();
+    const open = await SupportRequest.countDocuments({ status: "open" });
+    return res.json({ status, open, requests: list.map((r) => ({ ...r, topicLabel: TOPIC_LABELS[r.topic] })) });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+router.post("/support/:supportId/reply", async (req, res) => {
+  try {
+    const text = typeof req.body?.text === "string" ? req.body.text.trim().replace(/[ \t]+/g, " ") : "";
+    if (text.length < 2 || text.length > 1000) return res.status(400).json({ message: "Réponse de 2 à 1000 caractères", errors: { text: "2 à 1000 caractères" } });
+    const request = await SupportRequest.findById(req.params.supportId);
+    if (!request) return res.status(404).json({ message: "Demande introuvable" });
+    if (String(request.user) === String(req.user.id)) {
+      return res.status(403).json({ message: "C'est votre propre demande : un autre membre de l'équipe doit y répondre." });
+    }
+    request.reply = { text, by: req.user.id, at: new Date() };
+    request.status = "answered";
+    await request.save();
+    await Notification.create({
+      userId: request.user, type: "system_alert", title: "Réponse de l'équipe ISD",
+      message: text.length > 140 ? `${text.slice(0, 139)}…` : text, metadata: { support: String(request._id) },
+    }).catch((e) => console.error("notification support", e.message));
+    await audit(req, "support_replied", { supportId: String(request._id), topic: request.topic });
+    return res.json({ request });
   } catch (err) {
     return serverError(res, err);
   }

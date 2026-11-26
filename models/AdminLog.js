@@ -5,7 +5,7 @@ const mongoose = require("mongoose");
 const adminLogSchema = new mongoose.Schema(
   {
     admin: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-    action: { type: String, enum: ["payment_confirmed", "payment_rejected", "pricing_updated", "report_handled", "review_hidden", "review_shown", "2fa_enabled", "2fa_disabled", "2fa_recovery_codes"], required: true },
+    action: { type: String, enum: ["payment_confirmed", "payment_rejected", "pricing_updated", "report_handled", "review_hidden", "review_shown", "2fa_enabled", "2fa_disabled", "2fa_recovery_codes", "support_replied"], required: true },
     invoice: { type: mongoose.Schema.Types.ObjectId, ref: "Invoice", default: null },
     details: { type: mongoose.Schema.Types.Mixed, default: {} },
     ip: { type: String, default: "" },

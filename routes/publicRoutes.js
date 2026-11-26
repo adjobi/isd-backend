@@ -10,6 +10,7 @@ const { shortName } = require("../services/reviews");
 const { getPricing, launchActive } = require("../services/pricing");
 const { containsChatContact } = require("../validators/contact");
 const { recordVisit } = require("../services/audience");
+const { contactInfo } = require("./supportRoutes");
 
 const SERVICES = ["nanny", "tutor"];
 const publicLimiter = require("../middleware/rateLimit")({ windowMs: 60 * 1000, max: 120, message: "Trop de requêtes. Réessayez dans une minute." });
@@ -155,6 +156,9 @@ router.post("/visit", async (req, res) => {
   }
   return res.status(204).end();
 });
+
+// Moyens de contacter l'équipe ISD (écran « Aide et contact » de l'app).
+router.get("/contact", (req, res) => res.json(contactInfo()));
 
 router.get("/summary", async (req, res) => {
   try {

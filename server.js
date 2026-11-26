@@ -105,6 +105,7 @@ if (notificationRoutes) {
 app.use("/api/chat", chatRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/actions", actionRoutes);
+app.use("/api/support", require("./routes/supportRoutes"));
 app.use("/api/public", publicRoutes);
 app.use("/api/admin", adminRoutes);
 

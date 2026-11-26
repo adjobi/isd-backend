@@ -9,6 +9,7 @@ const Invoice = require("../models/Invoice");
 const Contract = require("../models/Contract");
 const MissionReview = require("../models/MissionReview");
 const Report = require("../models/Report");
+const SupportRequest = require("../models/SupportRequest");
 
 const DAY = 24 * 3600 * 1000;
 const WEEK = 7 * DAY;
@@ -205,7 +206,7 @@ async function payments(r) {
 
 async function quality(r) {
   const inRange = between("createdAt", r.start, r.end);
-  const [reviews, reports, openReports, ended, active, providers, available] = await Promise.all([
+  const [reviews, reports, openReports, ended, active, providers, available, support, openSupport] = await Promise.all([
     MissionReview.aggregate([{ $match: { ...inRange, status: "published" } }, { $group: { _id: null, n: { $sum: 1 }, avg: { $avg: "$rating" } } }]),
     Report.countDocuments(inRange),
     Report.countDocuments({ status: "open" }),
@@ -213,11 +214,13 @@ async function quality(r) {
     Contract.countDocuments({ "acceptedAt.family": { $ne: null }, "acceptedAt.provider": { $ne: null }, endedAt: null }),
     User.countDocuments({ role: { $in: ["nanny", "tutor"] } }),
     User.countDocuments({ role: { $in: ["nanny", "tutor"] }, availability: "available" }),
+    SupportRequest.countDocuments(inRange),
+    SupportRequest.countDocuments({ status: "open" }),
   ]);
   return {
     reviews: reviews[0]?.n || 0, rating: reviews[0]?.avg ? round(reviews[0].avg, 1) : null,
     reports, openReports, ended: toMap(ended.map((x) => ({ _id: x._id || "autre", n: x.n }))),
-    activeMissions: active, providers, availableProviders: available,
+    activeMissions: active, providers, availableProviders: available, support, openSupport,
   };
 }
 

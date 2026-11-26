@@ -54,7 +54,7 @@ async function recordVisit({ body, ip, ua, host, now = new Date() }) {
 const seen = new Set();
 let seenDay = "";
 function touchUser(token) {
-  if (!token?.id || !["family", "nanny", "tutor"].includes(token.role)) return;
+  if (!token?.id || token.team || !["family", "nanny", "tutor"].includes(token.role)) return;
   const now = new Date();
   const day = dayOf(now);
   if (day !== seenDay) { seen.clear(); seenDay = day; }

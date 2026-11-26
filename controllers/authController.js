@@ -158,6 +158,12 @@ exports.login = async (req, res) => {
     // Le profil et les droits ne sont indiqués qu'après un mot de passe correct.
     // Connexion « Équipe ISD » : n'importe quel profil, mais administrateur obligatoire.
     const teamLogin = role === "team";
+    if (user.teamOnly && !teamLogin) {
+      return res.status(403).json({
+        message: "Ce compte est réservé à l'équipe ISD : connectez-vous avec « Équipe ISD ».",
+        errors: { role: "Compte de l'équipe ISD" },
+      });
+    }
     if (role && !teamLogin && user.role !== role) {
       return res.status(403).json({
         message: `Ce compte est un compte "${user.role}". Veuillez vous connecter depuis le bon profil.`,
@@ -193,7 +199,7 @@ exports.login = async (req, res) => {
 // `mfa` : le code de double authentification a été vérifié (exigé pour l'Espace ISD).
 function session(user, { team = false, mfa = false } = {}) {
   const token = jwt.sign(
-    { id: user._id, role: user.role, ...(mfa ? { mfa: true } : {}) },
+    { id: user._id, role: user.role, ...(team ? { team: true } : {}), ...(mfa ? { mfa: true } : {}) },
     process.env.JWT_SECRET,
     { expiresIn: team ? TEAM_SESSION : SESSION }
   );

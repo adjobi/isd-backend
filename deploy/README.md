@@ -73,18 +73,21 @@ Le script demande le domaine, l'email et le numéro Mobile Money d'ISD, puis :
 
 ## 4. Créer le compte administrateur
 
-1. Sur l'application (`https://votre-domaine/app/`), inscrivez-vous normalement avec l'adresse de l'équipe (ex. `equipe@votre-domaine.com`),
-   de préférence **différente de votre compte personnel**.
-2. Sur le serveur, donnez-lui les droits :
+L'Espace ISD (paiements, identités, signalements) utilise un **compte dédié à l'équipe**, jamais un compte personnel.
+Ce compte ne s'ouvre que par « Équipe ISD » : il ne peut pas servir de compte famille ou prestataire.
+
+1. Sur le serveur, créez-le (le mot de passe, 12 caractères minimum, est demandé au clavier et ne s'affiche pas) :
    ```bash
    cd /opt/isd/isd-backend/deploy
-   sudo docker compose exec api node scripts/make-admin.js equipe@votre-domaine.com --production
+   sudo docker compose exec api node scripts/create-team-account.js equipe@votre-domaine.com --production
    ```
-3. Sur l'application (`/app/`) : accueil → « Équipe ISD » → connexion.
-4. **Activez la double authentification** (obligatoire en ligne : l'Espace ISD reste fermé sans elle).
+2. Sur l'application (`/app/`) : accueil → « Équipe ISD » → connexion.
+3. **Activez la double authentification** (obligatoire en ligne : l'Espace ISD reste fermé sans elle).
    Installez Google Authenticator ou Microsoft Authenticator sur votre téléphone, puis suivez l'écran
    « Sécurité du compte » : QR code, code à 6 chiffres, puis **10 codes de secours à noter sur papier**.
    Ensuite, chaque connexion demande le mot de passe et le code du téléphone.
+4. Si un compte personnel avait reçu les droits pendant les essais, retirez-les :
+   `sudo docker compose exec api node scripts/make-admin.js votre-email-perso --remove --production`
 
 Téléphone perdu **et** codes de secours perdus : après avoir vérifié l'identité de la personne,
 `sudo docker compose exec api node scripts/reset-2fa.js equipe@votre-domaine.com --production`,

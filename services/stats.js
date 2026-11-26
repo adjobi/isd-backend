@@ -99,16 +99,16 @@ async function audience(r) {
 async function signups(r) {
   const [rows, prev, communes, totals] = await Promise.all([
     User.aggregate([
-      { $match: between("createdAt", r.start, r.end) },
+      { $match: { ...between("createdAt", r.start, r.end), teamOnly: { $ne: true } } },
       { $group: { _id: { b: { $dateToString: { format: fmt(r), date: "$createdAt" } }, role: "$role" }, n: { $sum: 1 } } },
     ]),
-    User.countDocuments(between("createdAt", r.prevStart, r.start)),
+    User.countDocuments({ ...between("createdAt", r.prevStart, r.start), teamOnly: { $ne: true } }),
     User.aggregate([
-      { $match: between("createdAt", r.start, r.end) },
+      { $match: { ...between("createdAt", r.start, r.end), teamOnly: { $ne: true } } },
       { $group: { _id: { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ["$commune", ""] } }, 0] }, "$commune", { $ifNull: ["$city", "Non renseignée"] }] }, n: { $sum: 1 } } },
       { $sort: { n: -1 } }, { $limit: 8 },
     ]),
-    User.aggregate([{ $group: { _id: "$role", n: { $sum: 1 } } }]),
+    User.aggregate([{ $match: { teamOnly: { $ne: true } } }, { $group: { _id: "$role", n: { $sum: 1 } } }]),
   ]);
   const byRole = Object.fromEntries(ROLES.map((role) => [role, series(r, toMap(rows.filter((x) => x._id.role === role).map((x) => ({ _id: x._id.b, n: x.n }))))]));
   const total = rows.reduce((s, x) => s + x.n, 0);
@@ -137,7 +137,7 @@ async function retention(now) {
   const today = startOfDay(now);
   const monday = new Date(today.getTime() - ((today.getUTCDay() + 6) % 7) * DAY);
   const first = new Date(monday.getTime() - 7 * WEEK);
-  const users = await User.find({ createdAt: { $gte: first } }).select("_id createdAt").lean();
+  const users = await User.find({ createdAt: { $gte: first }, teamOnly: { $ne: true } }).select("_id createdAt").lean();
   if (!users.length) return [];
   const acts = await UserActivity.find({ user: { $in: users.map((u) => u._id) }, at: { $gte: first } }).select("user at").lean();
   const byUser = new Map();

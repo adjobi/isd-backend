@@ -9,7 +9,8 @@
     "seed": "node scripts/seed.js",
     "make-admin": "node scripts/make-admin.js",
     "reset-2fa": "node scripts/reset-2fa.js",
-    "purge-identity": "node scripts/purge-identity.js"
+    "purge-identity": "node scripts/purge-identity.js",
+    "create-team-account": "node scripts/create-team-account.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

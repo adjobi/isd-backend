@@ -10,6 +10,9 @@ const userSchema = new mongoose.Schema(
     // Droits d'administration ISD (validation des paiements, tarifs).
     // Jamais modifiable depuis l'app : uniquement par scripts/make-admin.js.
     isAdmin: { type: Boolean, default: false },
+    // Compte dédié à l'équipe ISD (scripts/create-team-account.js) : connexion « Équipe ISD » uniquement,
+    // jamais compté comme famille dans les statistiques.
+    teamOnly: { type: Boolean, default: false },
     // Double authentification (code de l'application d'authentification), obligatoire pour l'Espace ISD.
     twoFactorEnabled: { type: Boolean, default: false },
     // Secrets : jamais renvoyés par les requêtes (select: false), clé chiffrée (AES-256-GCM).

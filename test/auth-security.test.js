@@ -37,6 +37,40 @@ describe("Connexion : message unique", () => {
   });
 });
 
+describe("Compte dédié à l'équipe ISD", () => {
+  afterEach(() => { mock.restoreAll(); throttle.reset(); });
+
+  test("ne s'ouvre que par « Équipe ISD », jamais comme famille", async () => {
+    mock.method(User, "findOne", async () => user({ isAdmin: true, teamOnly: true }));
+    for (const role of [undefined, "family", "nanny"]) {
+      const res = await login({ email: "a@isd.ci", password: "Demo1234", ...(role ? { role } : {}) });
+      assert.equal(res.status, 403, String(role));
+      assert.match(res.body.message, /Équipe ISD/);
+      assert.equal(res.body.token, undefined);
+    }
+    const team = await login({ email: "a@isd.ci", password: "Demo1234", role: "team" });
+    assert.equal(team.status, 200);
+    assert.equal(jwt.decode(team.body.token).team, true);
+  });
+
+  test("le mot de passe est vérifié avant de révéler que c'est un compte équipe", async () => {
+    mock.method(User, "findOne", async () => user({ isAdmin: true, teamOnly: true }));
+    const res = await login({ email: "a@isd.ci", password: "Faux1234" });
+    assert.equal(res.status, 401);
+    assert.equal(res.body.message, "Email ou mot de passe incorrect.");
+  });
+
+  test("une session équipe n'est pas comptée comme une famille active", () => {
+    const UserActivity = require("../models/UserActivity");
+    const calls = mock.method(UserActivity, "updateOne", () => Promise.resolve());
+    const { touchUser } = require("../services/audience");
+    touchUser({ id: "64b00000000000000000aa01", role: "family", team: true });
+    assert.equal(calls.mock.callCount(), 0);
+    touchUser({ id: "64b00000000000000000aa02", role: "family" });
+    assert.equal(calls.mock.callCount(), 1);
+  });
+});
+
 describe("Connexion : limite de tentatives", () => {
   afterEach(() => { mock.restoreAll(); throttle.reset(); });
 

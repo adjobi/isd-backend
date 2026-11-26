@@ -230,6 +230,9 @@ describe("Actions en attente", () => {
     mock.method(ChatSession, "find", () => q([{ offerId: OFFER_ID, familyId: FAMILY_ID, providerId: PROVIDER_ID, startDateProposal: { date: new Date(), by: "family", at: new Date() } }]));
     mock.method(Contract, "find", () => q([]));
     mock.method(User, "find", () => q([{ _id: FAMILY_ID, firstName: "Marie", lastName: "Yao" }]));
+    // Identité déjà vérifiée : pas d'action « identity » (voir test/identity.test.js)
+    mock.method(User, "findById", () => q({ _id: PROVIDER_ID, role: "nanny", isVerified: true }));
+    mock.method(require("../models/IdentityCheck"), "findOne", () => q(null));
     const res = await as("get", "/api/actions", NANNY);
     assert.deepEqual(res.body.actions.map((a) => a.kind), ["counter_offer", "start_date_reply"]);
     assert.equal(res.body.actions[1].route, "Chat");

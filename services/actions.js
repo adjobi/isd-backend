@@ -7,6 +7,7 @@ const Contract = require("../models/Contract");
 const User = require("../models/User");
 const { ChatSession } = require("../models/Chat");
 const MissionReview = require("../models/MissionReview");
+const IdentityCheck = require("../models/IdentityCheck");
 const { reviewOpensAt } = require("./reviews");
 
 const idOf = (v) => String(v?._id || v);
@@ -18,7 +19,10 @@ const formatDay = (d) => new Date(d).toLocaleDateString("fr-FR", { weekday: "lon
 const PRIORITY = {
   end_response: 1, payment_rejected: 2, payment: 3, notice_confirm: 4, engagements: 5,
   applications: 6, counter_offer: 6, start_date_reply: 7, start_date_propose: 8, review: 9,
+  identity: 10,
 };
+// Après un refus, on laisse 24 h avant de reproposer la vérification d'identité.
+const IDENTITY_RETRY_MS = 24 * 60 * 60 * 1000;
 // On propose de donner son avis pendant 60 jours, sans relancer ensuite.
 const REVIEW_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
 
@@ -26,7 +30,8 @@ async function pendingActions(userId, tokenRole) {
   const me = String(userId);
   const isFamily = tokenRole === "family";
   const actions = [];
-  const add = (a) => actions.push({ ...a, id: `${a.kind}:${a.params.offerId}`, priority: PRIORITY[a.kind] });
+  // Identifiant stable : type + offre ; une action sans offre (ex. identité) fournit le sien.
+  const add = (a) => actions.push({ ...a, id: a.id || `${a.kind}:${a.params.offerId}`, priority: PRIORITY[a.kind] });
 
   const [offers, sessions, invoices, contracts, confirmed] = await Promise.all([
     isFamily
@@ -154,6 +159,22 @@ async function pendingActions(userId, tokenRole) {
       title: `Comment se passe la mission avec ${nameOf(c.provider)} ?`,
       text: "Votre avis aide les autres familles à choisir. Il ne prend qu'une minute.", cta: "Donner mon avis", route: "Mission",
     });
+  }
+
+  // Vérification d'identité (prestataire non vérifié, sans demande en cours ni refus récent)
+  if (!isFamily) {
+    const [user, check] = await Promise.all([
+      User.findById(me).select("role isVerified createdAt").lean(),
+      IdentityCheck.findOne({ user: me }).sort({ submittedAt: -1 }).select("status decidedAt submittedAt").lean(),
+    ]);
+    const recentlyRejected = check?.status === "rejected" && now - new Date(check.decidedAt || check.submittedAt).getTime() < IDENTITY_RETRY_MS;
+    if (user && ["nanny", "tutor"].includes(user.role) && !user.isVerified && check?.status !== "pending" && !recentlyRejected) {
+      add({
+        kind: "identity", id: "identity", params: {}, at: check?.decidedAt || user.createdAt,
+        title: "Faites vérifier votre identité",
+        text: "Les familles choisissent plus souvent un profil vérifié.", cta: "Vérifier mon identité", route: "IdentityVerification",
+      });
+    }
   }
 
   return actions.sort((a, b) => a.priority - b.priority || new Date(b.at) - new Date(a.at));

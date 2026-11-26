@@ -69,6 +69,7 @@ Le script demande le domaine, l'email et le numéro Mobile Money d'ISD, puis :
 
 > **Gardez une copie de `deploy/.env` en lieu sûr** (gestionnaire de mots de passe).
 > Sans `CHAT_ENCRYPTION_KEY`, les messages bloqués du chat d'une sauvegarde seraient illisibles.
+> `IDENTITY_ENCRYPTION_KEY` (distincte) chiffre les photos de vérification d'identité, gardées 30 jours au plus.
 
 ## 4. Créer le compte administrateur
 
@@ -101,7 +102,7 @@ Les données de démonstration (`npm run seed`) **ne peuvent pas** être chargé
 | Lire les journaux | `sudo docker compose logs --tail=100 api` |
 | Redémarrer l'API | `sudo docker compose restart api` |
 | Lister les sauvegardes | `ls -lh backups/` |
-| Restaurer une sauvegarde | `sudo ./restore.sh backups/isd-AAAA-MM-JJ_HHMM.archive.gz` |
+| Restaurer une sauvegarde | `sudo ./restore.sh backups/isd-AAAA-MM-JJ_HHMM.archive.gz` (purge ensuite les photos d'identité périmées) |
 | Voir les copies hors serveur | `sudo ./offsite.sh --list` |
 | Rapatrier une copie hors serveur | `sudo ./offsite.sh --get isd-AAAA-MM-JJ_HHMM.archive.gz.enc` |
 | Vérifier la dernière copie hors serveur | `tail -3 /var/log/isd-offsite.log` |

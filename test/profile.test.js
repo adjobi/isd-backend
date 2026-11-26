@@ -2,6 +2,7 @@ const { test, describe, afterEach, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
 const User = require("../models/User");
+const IdentityCheck = require("../models/IdentityCheck");
 const { tokenFor, buildApp } = require("./helpers");
 
 const app = buildApp();
@@ -17,6 +18,10 @@ const PNG = `data:image/png;base64,${Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 
 // Imite findByIdAndUpdate().select().lean() et mémorise la mise à jour reçue.
 const mockUpdate = () => {
   const seen = {};
+  // Profil actuel (relu si nom ou photo changent) et demandes de vérification (voir test/identity.test.js)
+  mock.method(User, "updateOne", async () => ({ modifiedCount: 0 }));
+  mock.method(User, "findById", () => { const q = { select: () => q, lean: async () => ({ _id: ID, firstName: "Ancien", lastName: "Nom", isVerified: false, photo: "" }) }; return q; });
+  mock.method(IdentityCheck, "updateMany", async () => ({ modifiedCount: 0 }));
   const fn = mock.method(User, "findByIdAndUpdate", (id, update, opts) => {
     Object.assign(seen, { id, update, opts });
     const q = { select: () => q, lean: async () => ({ _id: id, role: "nanny", ...update.$set }) };

@@ -54,7 +54,8 @@ const userSchema = new mongoose.Schema(
     availability: { type: String, enum: ["available", "busy", "away", "holiday"], default: "available" },
     rating: { type: Number, default: 0 },               // moyenne des avis publiés des familles
     reviewCount: { type: Number, default: 0 },
-    isVerified: { type: Boolean, default: false },
+    isVerified: { type: Boolean, default: false },       // identité vérifiée par l'équipe ISD (routes/identityRoutes.js)
+    verifiedAt: { type: Date },                           // date de la vérification ; supprimée si le nom change
     isProfileCompleted: { type: Boolean, default: false },
     lastLogin: { type: Date, default: null },
   },

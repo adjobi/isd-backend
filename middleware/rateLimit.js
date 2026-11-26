@@ -1,6 +1,7 @@
-// Limiteur simple par adresse IP (fenêtre fixe, en mémoire).
-// Utilisé pour les routes publiques sensibles (ex. inscription).
-module.exports = function rateLimit({ windowMs, max, message }) {
+// Limiteur simple (fenêtre fixe, en mémoire), par adresse IP par défaut.
+// Utilisé pour les routes publiques sensibles (ex. inscription) ; `key` permet de compter
+// par compte après authentification (ex. key: (req) => req.user?.id).
+module.exports = function rateLimit({ windowMs, max, message, key: keyOf = null }) {
   const hits = new Map();
   setInterval(() => {
     const now = Date.now();
@@ -9,7 +10,7 @@ module.exports = function rateLimit({ windowMs, max, message }) {
   // Compte un passage ; renvoie 0 si autorisé, sinon le délai d'attente en secondes.
   const hit = (req) => {
     const now = Date.now();
-    const key = req.ip || "inconnue";
+    const key = (keyOf && keyOf(req)) || req.ip || "inconnue";
     const cur = hits.get(key);
     if (!cur || cur.until <= now) {
       hits.set(key, { count: 1, until: now + windowMs });

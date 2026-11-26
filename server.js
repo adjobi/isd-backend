@@ -106,6 +106,7 @@ app.use("/api/chat", chatRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/actions", actionRoutes);
 app.use("/api/support", require("./routes/supportRoutes"));
+app.use("/api/identity", require("./routes/identityRoutes"));
 app.use("/api/public", publicRoutes);
 app.use("/api/admin", adminRoutes);
 
@@ -131,4 +132,8 @@ const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
   console.log("🚀 Server running on port", PORT);
+  // Rétention des photos de vérification d'identité : au démarrage puis toutes les 24 h.
+  // Les tests ne chargent jamais server.js (test/helpers.js monte les routes seules) ;
+  // scheduleRetention ne fait de toute façon rien si NODE_ENV=test.
+  require("./services/identity").scheduleRetention();
 });

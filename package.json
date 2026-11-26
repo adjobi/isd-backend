@@ -8,7 +8,8 @@
     "test": "node --test test/",
     "seed": "node scripts/seed.js",
     "make-admin": "node scripts/make-admin.js",
-    "reset-2fa": "node scripts/reset-2fa.js"
+    "reset-2fa": "node scripts/reset-2fa.js",
+    "purge-identity": "node scripts/purge-identity.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

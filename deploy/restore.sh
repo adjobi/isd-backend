@@ -18,3 +18,15 @@ NAME="$(basename "$FILE")"
 docker compose exec -T backup sh -c "mongorestore --uri=\"\$MONGO_URI\" --archive=/backups/$NAME --gzip --drop --nsInclude='isd.*'"
 echo "Restauration terminée. Redémarrage de l'API…"
 docker compose restart api
+
+# Une sauvegarde peut contenir des photos de vérification d'identité depuis supprimées :
+# on réapplique tout de suite la règle de rétention (demandes décidées ou expirées → photos effacées).
+echo "Purge des photos de vérification d'identité…"
+for i in 1 2 3 4 5 6; do
+  if docker compose exec -T api node scripts/purge-identity.js --production; then break; fi
+  if [ "$i" = 6 ]; then
+    echo "⚠️  Purge non effectuée : relancez  docker compose exec -T api node scripts/purge-identity.js --production"
+    exit 1
+  fi
+  sleep 10
+done

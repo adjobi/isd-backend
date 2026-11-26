@@ -13,6 +13,11 @@ if [ ! -f .env ]; then echo "deploy/.env manquant : lancez d'abord install.sh"; 
 DOMAIN="$(grep '^DOMAIN=' .env | cut -d= -f2-)"
 WHATSAPP_ISD="$(grep '^WHATSAPP_ISD=' .env | cut -d= -f2- || true)"
 if [ -z "$DOMAIN" ]; then echo "DOMAIN manquant dans deploy/.env"; exit 1; fi
+# Clé des photos de vérification d'identité, ajoutée aux installations antérieures (jamais remplacée).
+if ! grep -q '^IDENTITY_ENCRYPTION_KEY=' .env; then
+  { echo "# Clé distincte pour les photos de vérification d'identité."; echo "IDENTITY_ENCRYPTION_KEY=$(openssl rand -hex 32)"; } >> .env
+  chmod 600 .env
+fi
 if [ ! -d "$MOBILE_DIR" ]; then echo "Application introuvable : $MOBILE_DIR (clonez isd-mobile à côté d'isd-backend)"; exit 1; fi
 
 if [ "${1:-}" != "--no-pull" ]; then

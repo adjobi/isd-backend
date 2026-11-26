@@ -3,7 +3,9 @@ const router = express.Router();
 const { register, login } = require("../controllers/authController");
 const authMiddleware = require("../middleware/authMiddleware");
 const User = require("../models/User");
+const IdentityCheck = require("../models/IdentityCheck");
 const { validateProfile } = require("../validators/profile");
+const { NAME_CHANGED_REASON, rejectPendingUpdate } = require("../services/identity");
 
 // ======================
 // AUTH PUBLIC
@@ -60,7 +62,27 @@ router.put("/profile", authMiddleware, async (req, res) => {
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ message: "Aucune modification à enregistrer" });
     }
-    const user = await User.findByIdAndUpdate(req.user.id, { $set: updates }, { new: true, runValidators: true })
+    // Nom, prénom ou photo réellement modifiés : le badge « Vérifié » ne vaut plus. Il est retiré dans la
+    // MÊME écriture que l'enregistrement du profil (jamais avant, jamais en tâche détachée).
+    const nameTouched = updates.firstName !== undefined || updates.lastName !== undefined;
+    const photoTouched = updates.photo !== undefined;
+    let nameChanged = false;
+    let photoChanged = false;
+    let wasVerified = false;
+    if (nameTouched || photoTouched) {
+      const current = await User.findById(req.user.id).select(`firstName lastName isVerified${photoTouched ? " photo" : ""}`).lean();
+      if (!current) return res.status(404).json({ message: "Compte introuvable" });
+      wasVerified = !!current.isVerified;
+      nameChanged = (updates.firstName !== undefined && updates.firstName !== current.firstName)
+        || (updates.lastName !== undefined && updates.lastName !== current.lastName);
+      photoChanged = photoTouched && (updates.photo || "") !== (current.photo || "");
+    }
+    const write = { $set: { ...updates } };
+    if (nameChanged || photoChanged) {
+      write.$set.isVerified = false;
+      write.$unset = { verifiedAt: 1 };
+    }
+    const user = await User.findByIdAndUpdate(req.user.id, write, { new: true, runValidators: true })
       .select("-password")
       .lean();
     if (!user) return res.status(404).json({ message: "Compte introuvable" });
@@ -69,7 +91,18 @@ router.put("/profile", authMiddleware, async (req, res) => {
       user.photoUpdatedAt = new Date();
       await User.updateOne({ _id: user._id }, { $set: { photoUpdatedAt: user.photoUpdatedAt } });
     }
-    return res.json({ message: "Profil mis à jour", user: { ...user, id: user._id } });
+    // Nouveau nom : une demande de vérification en attente porte l'ancien nom, elle est annulée.
+    let identityCancelled = false;
+    if (nameChanged) {
+      const r = await IdentityCheck.updateMany({ user: user._id, status: "pending" }, rejectPendingUpdate(NAME_CHANGED_REASON));
+      identityCancelled = (r.modifiedCount || 0) > 0;
+    }
+    const body = { message: "Profil mis à jour", user: { ...user, id: user._id } };
+    if (identityCancelled) body.notice = `${NAME_CHANGED_REASON}.`;
+    else if ((nameChanged || photoChanged) && wasVerified) {
+      body.notice = "Profil modifié : refaites la vérification d'identité pour retrouver le badge « Identité vérifiée ».";
+    }
+    return res.json(body);
   } catch (err) {
     console.error("PUT /auth/profile", err);
     return res.status(500).json({ message: "Impossible d’enregistrer le profil. Réessayez." });

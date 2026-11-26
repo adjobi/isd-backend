@@ -12,6 +12,9 @@ const AdminLog = require("../models/AdminLog");
 const Report = require("../models/Report");
 const MissionReview = require("../models/MissionReview");
 const SupportRequest = require("../models/SupportRequest");
+const IdentityCheck = require("../models/IdentityCheck");
+const identityCrypto = require("../utils/identityCrypto");
+const { DOC_TYPES, NAME_CHANGED_REASON } = require("../services/identity");
 const Notification = require("../models/Notification");
 const { TOPIC_LABELS, cleanText, contactInfo } = require("./supportRoutes");
 const { containsChatContact } = require("../validators/contact");
@@ -55,6 +58,11 @@ router.param("supportId", (req, res, next, id) => {
 });
 
 router.param("reviewId", (req, res, next, id) => {
+  if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });
+  return next();
+});
+
+router.param("checkId", (req, res, next, id) => {
   if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Identifiant invalide" });
   return next();
 });
@@ -308,6 +316,137 @@ async function moderateReview(req, res, toStatus) {
 }
 router.post("/reviews/:reviewId/hide", (req, res) => moderateReview(req, res, "hidden").catch((err) => serverError(res, err)));
 router.post("/reviews/:reviewId/show", (req, res) => moderateReview(req, res, "published").catch((err) => serverError(res, err)));
+
+// ================================
+// VÉRIFICATION D'IDENTITÉ DES PRESTATAIRES
+// ================================
+// Les images (chiffrées) ne sortent que par GET /identity/:checkId/images, jamais dans la liste,
+// et sont supprimées dès la décision.
+const ID_STATUSES = ["pending", "approved", "rejected"];
+const OWN_CHECK = "C'est votre propre demande : un autre membre de l'équipe doit la traiter.";
+
+router.get("/identity", async (req, res) => {
+  try {
+    const status = ID_STATUSES.includes(req.query.status) ? req.query.status : "pending";
+    const list = await IdentityCheck.find({ status }).sort({ submittedAt: status === "pending" ? 1 : -1 }).limit(100)
+      .select("user docType status submittedAt decidedAt decidedBy rejectReason hasImages")
+      .populate("user", "firstName lastName role commune city").populate("decidedBy", "firstName lastName").lean();
+    // Présence d'une photo de profil, sans charger les photos elles-mêmes.
+    const userIds = list.map((c) => c.user?._id).filter(Boolean);
+    const withPhoto = userIds.length
+      ? new Set((await User.find({ _id: { $in: userIds }, photo: { $nin: ["", null] } }).select("_id").lean()).map((u) => String(u._id)))
+      : new Set();
+    const pending = await IdentityCheck.countDocuments({ status: "pending" });
+    const checks = list.map((c) => ({
+      _id: c._id,
+      user: c.user ? {
+        _id: c.user._id, firstName: c.user.firstName, lastName: c.user.lastName, role: c.user.role,
+        commune: c.user.commune || "", city: c.user.city || "", hasPhoto: withPhoto.has(String(c.user._id)),
+      } : null,
+      docType: c.docType,
+      docTypeLabel: DOC_TYPES[c.docType] || c.docType,
+      status: c.status,
+      submittedAt: c.submittedAt,
+      decidedAt: c.decidedAt || null,
+      decidedBy: c.decidedBy ? { firstName: c.decidedBy.firstName, lastName: c.decidedBy.lastName } : null,
+      rejectReason: c.rejectReason || "",
+      hasImages: !!c.hasImages,
+    }));
+    return res.json({ status, checks, pending });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+router.get("/identity/:checkId/images", async (req, res) => {
+  try {
+    res.set({ "Cache-Control": "no-store", Pragma: "no-cache" });
+    const check = await IdentityCheck.findById(req.params.checkId).select("+document +selfie user status docType").lean();
+    if (!check) return res.status(404).json({ message: "Demande introuvable" });
+    if (String(check.user) === String(req.user.id)) return res.status(403).json({ message: OWN_CHECK });
+    if (!check.document || !check.selfie) return res.status(410).json({ message: "Images supprimées après décision." });
+    // Journal obligatoire : écrit (et attendu) AVANT tout déchiffrement. S'il échoue, rien n'est montré.
+    // (Pas de audit() ici : il avale les erreurs.)
+    try {
+      await AdminLog.create({
+        admin: req.user.id, action: "identity_viewed", invoice: null, ip: req.ip || "",
+        details: { checkId: String(check._id), userId: String(check.user), docType: check.docType },
+      });
+    } catch (err) {
+      console.error("journal admin identity_viewed", err.message);
+      return res.status(503).json({ message: "Journal indisponible : images non affichées. Réessayez dans un instant." });
+    }
+    const document = identityCrypto.decryptIdentity(check.document, check._id, "document");
+    const selfie = identityCrypto.decryptIdentity(check.selfie, check._id, "selfie");
+    if (!document || !selfie) return res.status(503).json({ message: "Images illisibles : clé de chiffrement absente ou modifiée." });
+    const owner = await User.findById(check.user).select("photo").lean();
+    const profilePhoto = /^data:image\/(jpeg|png|webp);base64,/.test(owner?.photo || "") ? owner.photo : null;
+    return res.json({ document, selfie, profilePhoto });
+  } catch (err) {
+    return serverError(res, err);
+  }
+});
+
+// Décision atomique : une seule par demande, jamais sur sa propre demande ; images supprimées.
+async function decideIdentity(req, res, status, reason = "") {
+  const now = new Date();
+  const check = await IdentityCheck.findOneAndUpdate(
+    { _id: req.params.checkId, status: "pending", user: { $ne: req.user.id } },
+    {
+      $set: { status, decidedBy: req.user.id, decidedAt: now, rejectReason: reason, hasImages: false },
+      $unset: { document: 1, selfie: 1 },
+    },
+    { new: true }
+  ).lean();
+  if (!check) {
+    const existing = await IdentityCheck.findById(req.params.checkId).select("user status").lean();
+    if (!existing) return res.status(404).json({ message: "Demande introuvable" });
+    if (String(existing.user) === String(req.user.id)) return res.status(403).json({ message: OWN_CHECK });
+    return res.status(409).json({ message: "Cette demande a déjà été traitée." });
+  }
+  const approved = status === "approved";
+  if (approved) {
+    // Badge appliqué seulement si le nom du profil est encore celui de l'envoi (filtre atomique).
+    const r = await User.updateOne(
+      { _id: check.user, firstName: check.firstName, lastName: check.lastName },
+      { $set: { isVerified: true, verifiedAt: now } }
+    );
+    if (!r.matchedCount) {
+      await IdentityCheck.updateOne({ _id: check._id }, { $set: { status: "rejected", rejectReason: NAME_CHANGED_REASON, hasImages: false }, $unset: { document: 1, selfie: 1 } });
+      await Notification.create({
+        userId: check.user, type: "system_alert", title: "Vérification d'identité refusée",
+        message: `${NAME_CHANGED_REASON}. Vos photos ont été supprimées ; vous pouvez envoyer une nouvelle demande.`,
+        metadata: { identity: "rejected", checkId: String(check._id) },
+      }).catch((e) => console.error("notification identité", e.message));
+      await audit(req, "identity_rejected", { checkId: String(check._id), userId: String(check.user), docType: check.docType, reason: NAME_CHANGED_REASON });
+      return res.status(409).json({ message: "Le nom du profil a changé depuis l'envoi : demande annulée." });
+    }
+  }
+  await Notification.create({
+    userId: check.user, type: "system_alert",
+    title: approved ? "Identité vérifiée" : "Vérification d'identité refusée",
+    message: approved
+      ? "L'équipe ISD a vérifié votre identité : votre profil affiche désormais le badge « Vérifié ». Vos photos ont été supprimées."
+      : `Motif : ${reason}. Vos photos ont été supprimées ; vous pouvez envoyer une nouvelle demande.`,
+    metadata: { identity: status, checkId: String(check._id) },
+  }).catch((e) => console.error("notification identité", e.message));
+  await audit(req, approved ? "identity_approved" : "identity_rejected", {
+    checkId: String(check._id), userId: String(check.user), docType: check.docType, ...(approved ? {} : { reason }),
+  });
+  return res.json({
+    message: approved ? "Identité vérifiée" : "Demande refusée",
+    check: { _id: check._id, status: check.status, docType: check.docType, docTypeLabel: DOC_TYPES[check.docType] || check.docType, decidedAt: check.decidedAt, rejectReason: check.rejectReason || "" },
+  });
+}
+
+router.post("/identity/:checkId/approve", (req, res) => decideIdentity(req, res, "approved").catch((err) => serverError(res, err)));
+
+router.post("/identity/:checkId/reject", (req, res) => {
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim().replace(/\s+/g, " ") : "";
+  if (reason.length < 5 || reason.length > 200) return res.status(400).json({ message: "Indiquez le motif (5 à 200 caractères)", errors: { reason: "5 à 200 caractères" } });
+  if (hasForeignContact(reason)) return res.status(400).json({ message: CONTACT_REFUSED, errors: { reason: "Retirez les coordonnées" } });
+  return decideIdentity(req, res, "rejected", reason).catch((err) => serverError(res, err));
+});
 
 // ================================
 // JOURNAL DES ACTIONS (100 dernières)

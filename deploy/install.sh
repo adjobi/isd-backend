@@ -52,10 +52,19 @@ MONGO_PASSWORD=$(openssl rand -hex 24)
 JWT_SECRET=$(openssl rand -hex 64)
 # Ne JAMAIS changer après la mise en ligne : les messages bloqués du chat deviendraient illisibles.
 CHAT_ENCRYPTION_KEY=$(openssl rand -hex 32)
+# Clé distincte pour les photos de vérification d'identité.
+IDENTITY_ENCRYPTION_KEY=$(openssl rand -hex 32)
 CINETPAY_APIKEY=
 CINETPAY_SITE_ID=
 EOF
   echo "   deploy/.env créé (lisible par root uniquement). Gardez-en une copie en lieu sûr."
+fi
+# Clé des photos de vérification d'identité (ajoutée aussi aux installations existantes).
+if ! grep -q '^IDENTITY_ENCRYPTION_KEY=' .env; then
+  {
+    echo "# Clé distincte pour les photos de vérification d'identité."
+    echo "IDENTITY_ENCRYPTION_KEY=$(openssl rand -hex 32)"
+  } >> .env
 fi
 # Copie chiffrée des sauvegardes hors du serveur (ajoutée aussi aux installations existantes).
 if ! grep -q '^BACKUP_PASSPHRASE=' .env; then

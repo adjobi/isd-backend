@@ -110,7 +110,12 @@ describe("PUT /api/auth/profile", () => {
       assert.equal(res.status, 400, JSON.stringify(body));
       assert.match(JSON.stringify(res.body.errors), /coordonnées/);
     }
-    assert.equal(fn.mock.callCount(), 0);
+    // Rien n'est enregistré dans le profil : seul le compteur de tentatives est incrémenté.
+    assert.equal(fn.mock.callCount(), cases.length);
+    for (const c of fn.mock.calls) {
+      assert.deepEqual(c.arguments[1], { $inc: { contactStrikes: 1 } });
+      assert.equal(String(c.arguments[0]), ID);
+    }
   });
 
   test("accepte un texte normal avec des montants et des âges", async () => {

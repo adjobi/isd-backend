@@ -10,8 +10,8 @@ const User = require("../models/User");
 const Notification = require("../models/Notification");
 const Report = require("../models/Report");
 const MissionReview = require("../models/MissionReview");
-const { ChatSession } = require("../models/Chat");
 const chat = require("../services/chat");
+const { maskName } = require("../utils/names");
 const payment = require("../services/payment");
 const cinetpay = require("../services/cinetpay");
 const engagement = require("../services/engagement");
@@ -36,7 +36,9 @@ const serverError = (res, err) => {
 async function loadInvoice(req, res) {
   let invoice = await Invoice.findOne({ offerId: req.params.offerId });
   if (!invoice) {
-    const session = await ChatSession.findOne({ offerId: req.params.offerId });
+    // Discussion de l'accord conclu uniquement (jamais celle d'un autre candidat).
+    const offer = await Offer.findById(req.params.offerId).select("acceptedProvider").lean();
+    const session = offer?.acceptedProvider ? await chat.findSession(req.params.offerId, offer.acceptedProvider) : null;
     if (session && chat.participantRole(session, req.user.id) && session.startDate) {
       invoice = await payment.ensureInvoice(session, req.app.get("io"));
     }
@@ -87,7 +89,8 @@ router.get("/mine", auth, async (req, res) => {
       ]);
       // État de la mission : à confirmer, en cours, fin programmée, terminée
       const mission = contract ? { state: engagement.stateOf(contract), endedAt: contract.endedAt } : null;
-      return { ...serializeInvoice(inv, role), role, offer, other, mission };
+      // Nom complet de l'autre partie seulement une fois la facture ISD réglée
+      return { ...serializeInvoice(inv, role), role, offer, other: inv.status === "paid" ? other : maskName(other), mission };
     }));
     return res.json(list);
   } catch (err) {
@@ -247,9 +250,9 @@ function serializeContract(doc, invoice, now = new Date()) {
 }
 
 // Message ISD dans le chat de la mission (sans bloquer l'action en cas d'échec).
-async function tellChat(io, offerId, text, meta, { close = false } = {}) {
+async function tellChat(io, invoice, text, meta, { close = false } = {}) {
   try {
-    const session = await ChatSession.findOne({ offerId });
+    const session = await payment.agreementSession(invoice);
     if (!session) return;
     if (close && session.status !== "closed") {
       session.status = "closed";
@@ -258,7 +261,7 @@ async function tellChat(io, offerId, text, meta, { close = false } = {}) {
       await session.save();
     }
     const msg = await chat.systemMessage(session, text, { meta });
-    chat.emitMessage(io, msg);
+    chat.emitMessage(io, msg, session);
     if (close) chat.emitSession(io, session);
   } catch (err) {
     console.error("chat engagements", err);
@@ -355,10 +358,10 @@ router.post("/:offerId/contract/accept", auth, async (req, res) => {
       const io = req.app.get("io");
       if (r.active) {
         await chat.notify(other, "Engagements confirmés ✅", `${who} a confirmé à son tour : vos engagements sont en vigueur (${noticeLabel(r.notice)}).`, invoice.offerId);
-        await tellChat(io, invoice.offerId, `🤝 Engagements confirmés par les deux parties, avec ${noticeLabel(r.notice)}. Ils sont consultables à tout moment dans « Mission ».`, { kind: "engagements_confirmed" });
+        await tellChat(io, invoice, `🤝 Engagements confirmés par les deux parties, avec ${noticeLabel(r.notice)}. Ils sont consultables à tout moment dans « Mission ».`, { kind: "engagements_confirmed" });
       } else if (r.proposed) {
         await chat.notify(other, "Préavis à confirmer", `${who} propose ${noticeLabel(r.notice)}. Confirmez ou proposez une autre durée dans « Mission ».`, invoice.offerId);
-        await tellChat(io, invoice.offerId, `${who} propose ${noticeLabel(r.notice)} pour mettre fin à la mission. L'autre partie peut confirmer ou proposer une autre durée dans « Mission ».`, { kind: "notice_proposed" });
+        await tellChat(io, invoice, `${who} propose ${noticeLabel(r.notice)} pour mettre fin à la mission. L'autre partie peut confirmer ou proposer une autre durée dans « Mission ».`, { kind: "notice_proposed" });
       } else {
         await chat.notify(other, "Engagements à confirmer", `${who} a confirmé le récapitulatif (${noticeLabel(r.notice)}). À vous de le confirmer dans « Mission ».`, invoice.offerId);
       }
@@ -395,17 +398,17 @@ router.post("/:offerId/contract/end", auth, async (req, res) => {
     const day = chat.formatDay(r.termination.effectiveAt);
     if (r.termination.mode === "mutual") {
       await chat.notify(other, "Proposition de fin de mission", `${who} propose de terminer la mission le ${day}. Répondez dans « Mission ».`, invoice.offerId);
-      await tellChat(io, invoice.offerId, `${who} propose de terminer la mission d'un commun accord le ${day} (motif : ${label}). L'autre partie peut accepter ou refuser dans « Mission ».`, { kind: "end_proposed" });
+      await tellChat(io, invoice, `${who} propose de terminer la mission d'un commun accord le ${day} (motif : ${label}). L'autre partie peut accepter ou refuser dans « Mission ».`, { kind: "end_proposed" });
     } else if (r.termination.mode === "serious") {
       await Report.create({ offerId: invoice.offerId, contractId: contract._id, by: req.user.id, byRole: role, against: other, reason: r.termination.reason, comment: r.termination.comment });
       await chat.notify(other, "Fin de mission", `${who} a mis fin à la mission immédiatement et a signalé un problème grave à ISD. L'équipe ISD peut vous contacter.`, invoice.offerId);
-      await tellChat(io, invoice.offerId, `${who} a mis fin à la mission avec effet immédiat pour un problème grave (motif : ${label}). L'équipe ISD a été prévenue et pourra contacter chacun d'entre vous.`, { kind: "ended" }, { close: true });
+      await tellChat(io, invoice, `${who} a mis fin à la mission avec effet immédiat pour un problème grave (motif : ${label}). L'équipe ISD a été prévenue et pourra contacter chacun d'entre vous.`, { kind: "ended" }, { close: true });
     } else if (r.endNow) {
       await chat.notify(other, "Fin de mission", `${who} a mis fin à la mission (motif : ${label}).`, invoice.offerId);
-      await tellChat(io, invoice.offerId, `${who} a mis fin à la mission (motif : ${label}). Aucun préavis n'avait été convenu.`, { kind: "ended" });
+      await tellChat(io, invoice, `${who} a mis fin à la mission (motif : ${label}). Aucun préavis n'avait été convenu.`, { kind: "ended" });
     } else {
       await chat.notify(other, "Préavis de fin de mission", `${who} met fin à la mission avec ${noticeLabel(r.termination.noticeDays)} : dernier jour le ${day}.`, invoice.offerId);
-      await tellChat(io, invoice.offerId, `${who} met fin à la mission en respectant le préavis convenu de ${r.termination.noticeDays} jour${r.termination.noticeDays > 1 ? "s" : ""}. La mission se termine le ${day} (motif : ${label}).`, { kind: "end_notice" });
+      await tellChat(io, invoice, `${who} met fin à la mission en respectant le préavis convenu de ${r.termination.noticeDays} jour${r.termination.noticeDays > 1 ? "s" : ""}. La mission se termine le ${day} (motif : ${label}).`, { kind: "end_notice" });
     }
     return res.status(201).json({ contract: serializeContract(contract, invoice, now) });
   } catch (err) {
@@ -435,10 +438,10 @@ router.post("/:offerId/contract/end/respond", auth, async (req, res) => {
     const day = chat.formatDay(r.termination.effectiveAt);
     if (accept) {
       await chat.notify(proposer, "Fin de mission acceptée", `La mission se termine d'un commun accord le ${day}.`, invoice.offerId);
-      await tellChat(io, invoice.offerId, `🤝 Fin de mission convenue d'un commun accord : dernier jour le ${day}. Merci à tous les deux pour cette collaboration.`, { kind: "end_agreed" });
+      await tellChat(io, invoice, `🤝 Fin de mission convenue d'un commun accord : dernier jour le ${day}. Merci à tous les deux pour cette collaboration.`, { kind: "end_agreed" });
     } else {
       await chat.notify(proposer, "Fin de mission refusée", "Votre proposition de fin n'a pas été acceptée. Échangez dans le chat ou mettez fin à la mission avec le préavis convenu.", invoice.offerId);
-      await tellChat(io, invoice.offerId, "La proposition de fin de mission n'a pas été acceptée : la mission continue. Vous pouvez en reparler dans ce chat.", { kind: "end_declined" });
+      await tellChat(io, invoice, "La proposition de fin de mission n'a pas été acceptée : la mission continue. Vous pouvez en reparler dans ce chat.", { kind: "end_declined" });
     }
     return res.json({ contract: serializeContract(contract, invoice, now) });
   } catch (err) {
@@ -458,7 +461,7 @@ router.post("/:offerId/contract/end/cancel", auth, async (req, res) => {
     await contract.save();
     const other = role === "family" ? invoice.provider : invoice.family;
     await chat.notify(other, "Proposition de fin retirée", `${ROLE_NAME[role]} a retiré sa proposition : la mission continue.`, invoice.offerId);
-    await tellChat(req.app.get("io"), invoice.offerId, `${ROLE_NAME[role]} a retiré sa proposition de fin de mission : la mission continue.`, { kind: "end_cancelled" });
+    await tellChat(req.app.get("io"), invoice, `${ROLE_NAME[role]} a retiré sa proposition de fin de mission : la mission continue.`, { kind: "end_cancelled" });
     return res.json({ contract: serializeContract(contract, invoice) });
   } catch (err) {
     return handleConcurrency(res, err);
@@ -503,14 +506,14 @@ router.post("/:offerId/replacement", auth, async (req, res) => {
     }
 
     const io = req.app.get("io");
-    const session = await ChatSession.findOne({ offerId: invoice.offerId });
+    const session = await payment.agreementSession(invoice);
     if (session && !alreadyEnding) {
       session.status = "closed";
       session.closedReason = "replacement";
       session.closedBy = "family";
       await session.save();
       const msg = await chat.systemMessage(session, "La famille a demandé un remplacement au titre de la garantie ISD. Cette mission prend fin ; merci pour votre engagement.", { meta: { kind: "replacement" } });
-      chat.emitMessage(io, msg);
+      chat.emitMessage(io, msg, session);
       chat.emitSession(io, session);
     }
     if (!alreadyEnding) await chat.notify(invoice.provider, "Fin de mission", "La famille a demandé un remplacement au titre de la garantie ISD. D'autres offres vous attendent.", invoice.offerId);

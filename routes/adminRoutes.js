@@ -193,7 +193,7 @@ router.get("/reports", async (req, res) => {
       .populate("by", "firstName lastName phone role").populate("against", "firstName lastName phone role")
       .populate("offerId", "description city serviceType").populate("handledBy", "firstName lastName").lean();
     const open = await Report.countDocuments({ status: "open" });
-    return res.json({ status, open, reports: reports.map((r) => ({ ...r, reasonLabel: REASON_LABELS[r.reason] || r.reason })) });
+    return res.json({ status, open, reports: reports.map((r) => ({ ...r, kind: r.kind || "mission", reasonLabel: REASON_LABELS[r.reason] || (r.reason === "contact_strikes" ? "Tentatives répétées de partage de coordonnées" : r.reason) })) });
   } catch (err) {
     return serverError(res, err);
   }

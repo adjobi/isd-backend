@@ -162,15 +162,17 @@ async function retention(now) {
 
 async function marketplace(r) {
   const inRange = between("createdAt", r.start, r.end);
-  const [offers, families, withApps, invoices, paid, replacements] = await Promise.all([
+  const [offers, families, withApps, withDiscussions, invoices, paid, replacements] = await Promise.all([
     Offer.countDocuments(inRange),
     Offer.distinct("family", inRange),
     Offer.countDocuments({ ...inRange, "applications.0": { $exists: true } }),
+    // Offres où au moins une discussion famille × prestataire a été ouverte (« Discuter »)
+    Offer.countDocuments({ ...inRange, applications: { $elemMatch: { sessionId: { $ne: null } } } }),
     Invoice.countDocuments({ ...inRange, status: { $ne: "cancelled" } }),
     Invoice.countDocuments({ ...between("paidAt", r.start, r.end), status: "paid" }),
     Offer.countDocuments({ ...inRange, replacementOf: { $ne: null } }),
   ]);
-  return { offers, families: families.length, withApplications: withApps, matches: invoices, paid, replacements };
+  return { offers, families: families.length, withApplications: withApps, withDiscussions, matches: invoices, paid, replacements };
 }
 
 async function payments(r) {

@@ -202,8 +202,9 @@ describe("Actions en attente", () => {
 
   test("famille : candidatures, facture, préavis proposé, fin proposée", async () => {
     const offer = { _id: OFFER_ID, description: "Garde à Cocody", updatedAt: new Date(), applications: [
-      { provider: PROVIDER_ID, status: "pending", lastOfferBy: "provider" },
-      { provider: "x", status: "pending", lastOfferBy: "family" },
+      { provider: "64b0000000000000000000c9", status: "pending", stage: "applied" },
+      // Discussion en cours : la famille a confirmé la mission, c'est au prestataire (pas d'action pour elle)
+      { provider: PROVIDER_ID, status: "pending", stage: "discussion", sessionId: "s1", missionAgreed: { family: new Date(), provider: null } },
     ] };
     mock.method(Offer, "find", (filter) => q(filter._id ? [offer] : [offer]));
     mock.method(ChatSession, "find", () => q([]));
@@ -225,7 +226,7 @@ describe("Actions en attente", () => {
   test("prestataire : contre-proposition de la famille et date proposée", async () => {
     mock.method(Offer, "find", (filter) => q(filter._id ? [{ _id: OFFER_ID, description: "Cours de maths" }] : [{
       _id: OFFER_ID, description: "Cours de maths", family: FAMILY_ID, updatedAt: new Date(),
-      applications: [{ provider: PROVIDER_ID, status: "pending", lastOfferBy: "family" }],
+      applications: [{ provider: PROVIDER_ID, status: "pending", stage: "salary", sessionId: "s1", history: [{ by: "family", amount: 40000 }], lastOfferBy: "family" }],
     }]));
     mock.method(ChatSession, "find", () => q([{ offerId: OFFER_ID, familyId: FAMILY_ID, providerId: PROVIDER_ID, startDateProposal: { date: new Date(), by: "family", at: new Date() } }]));
     mock.method(Contract, "find", () => q([]));
@@ -235,7 +236,32 @@ describe("Actions en attente", () => {
     mock.method(require("../models/IdentityCheck"), "findOne", () => q(null));
     const res = await as("get", "/api/actions", NANNY);
     assert.deepEqual(res.body.actions.map((a) => a.kind), ["counter_offer", "start_date_reply"]);
+    assert.equal(res.body.actions[0].route, "Chat");
+    assert.equal(res.body.actions[0].params.sessionId, "s1");
     assert.equal(res.body.actions[1].route, "Chat");
+  });
+
+  test("discussions : confirmer la mission, proposer le salaire (une action par discussion)", async () => {
+    const P2 = "64b0000000000000000000c8";
+    mock.method(Offer, "find", (filter) => q(filter._id ? [] : [{
+      _id: OFFER_ID, description: "Garde à Cocody", updatedAt: new Date(), applications: [
+        { provider: PROVIDER_ID, status: "pending", stage: "discussion", sessionId: "s1", missionAgreed: { family: null, provider: new Date() } },
+        { provider: P2, status: "pending", stage: "salary", sessionId: "s2", missionAgreed: { family: new Date(), provider: new Date() }, history: [] },
+      ],
+    }]));
+    let sessionFilter;
+    mock.method(ChatSession, "find", (f) => { sessionFilter = f; return q([]); });
+    mock.method(Invoice, "find", () => q([]));
+    mock.method(Contract, "find", () => q([]));
+    mock.method(User, "find", () => q([{ _id: PROVIDER_ID, firstName: "Awa", lastName: "Koné" }]));
+    const res = await as("get", "/api/actions", FAMILY);
+    assert.deepEqual(res.body.actions.map((a) => a.kind).sort(), ["mission_confirm", "salary_propose"]);
+    const m = res.body.actions.find((a) => a.kind === "mission_confirm");
+    assert.match(m.title, /Awa K\. est d'accord/);
+    assert.deepEqual(m.params, { offerId: OFFER_ID, providerId: PROVIDER_ID, sessionId: "s1" });
+    assert.notEqual(res.body.actions[0].id, res.body.actions[1].id);
+    // La date de début ne concerne que la discussion de l'accord
+    assert.deepEqual(sessionFilter.status, { $nin: ["closed", "discussion"] });
   });
 
   test("rien en attente : liste vide", async () => {

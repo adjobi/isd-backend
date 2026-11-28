@@ -2,6 +2,13 @@ const mongoose = require("mongoose");
 
 const chatMessageSchema = new mongoose.Schema(
   {
+    // Discussion (ChatSession) du message. Absent sur les anciens messages : la discussion
+    // se retrouve alors par (offerId, providerId), toujours renseignés.
+    sessionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ChatSession",
+      default: null,
+    },
     offerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Offer",
@@ -59,7 +66,11 @@ const chatMessageSchema = new mongoose.Schema(
     // Type de message
     type: {
       type: String,
-      enum: ["text", "system", "warning", "invoice", "info_reveal", "blocked", "start_date"],
+      // Cartes : start_date (date de début), mission_agreed (mission validée des deux côtés),
+      // price_offer (proposition de salaire), price_accepted (accord conclu), discussion_closed.
+      // Le champ `message` reste toujours lisible tel quel.
+      enum: ["text", "system", "warning", "invoice", "info_reveal", "blocked", "start_date",
+        "mission_agreed", "price_offer", "price_accepted", "discussion_closed"],
       default: "text",
     },
     isRead: {
@@ -70,9 +81,10 @@ const chatMessageSchema = new mongoose.Schema(
   { timestamps: true }
 );
 chatMessageSchema.index({ offerId: 1, createdAt: 1 });
+chatMessageSchema.index({ offerId: 1, providerId: 1, createdAt: 1 });
 
 // ================================
-// CHAT SESSION (état de la session)
+// CHAT SESSION : une discussion privée par couple (offre, prestataire)
 // ================================
 const chatSessionSchema = new mongoose.Schema(
   {
@@ -80,7 +92,6 @@ const chatSessionSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Offer",
       required: true,
-      unique: true,
     },
     familyId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -94,7 +105,9 @@ const chatSessionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["active", "agreement_reached", "invoice_sent", "paid", "closed"],
+      // discussion : avant l'accord (mission puis salaire) ; active : accord conclu ;
+      // agreement_reached : date de début convenue ; paid : facture ISD réglée ; closed : fermée.
+      enum: ["discussion", "active", "agreement_reached", "invoice_sent", "paid", "closed"],
       default: "active",
     },
     // Accord des deux parties
@@ -121,6 +134,14 @@ const chatSessionSchema = new mongoose.Schema(
       family: { type: Date, default: null },
       provider: { type: Date, default: null },
     },
+    // Mémoire courte des chiffres envoyés par chaque partie (numéro dicté en plusieurs messages).
+    // Jamais renvoyée aux participants.
+    contactMemory: { type: Object, default: () => ({ family: [], provider: [] }) },
+    // Rappel « coordonnées après paiement » déjà affiché (intention sans coordonnée, non compté)
+    contactReminded: {
+      family: { type: Boolean, default: false },
+      provider: { type: Boolean, default: false },
+    },
     // Infos révélées après paiement
     infoRevealed: { type: Boolean, default: false },
     // Date de collaboration convenue
@@ -131,6 +152,11 @@ const chatSessionSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+// Une seule discussion par couple (offre, prestataire).
+// Base existante : l'ancien index unique { offerId: 1 } doit être retiré (scripts/migrate-chat-sessions.js).
+chatSessionSchema.index({ offerId: 1, providerId: 1 }, { unique: true });
+chatSessionSchema.index({ familyId: 1, lastMessageAt: -1 });
+chatSessionSchema.index({ providerId: 1, lastMessageAt: -1 });
 
 module.exports = {
   ChatMessage: mongoose.model("ChatMessage", chatMessageSchema),

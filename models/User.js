@@ -61,6 +61,9 @@ const userSchema = new mongoose.Schema(
     verifiedAt: { type: Date },                           // date de la vérification ; supprimée si le nom change
     isProfileCompleted: { type: Boolean, default: false },
     lastLogin: { type: Date, default: null },
+    // Tentatives de partage de coordonnées refusées (chat, candidature, offre, profil) : jamais renvoyé
+    // à l'utilisateur ; tous les 5, un signalement est créé pour l'équipe ISD (services/moderation.js).
+    contactStrikes: { type: Number, default: 0, select: false },
   },
   { timestamps: true }
 );

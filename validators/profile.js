@@ -130,4 +130,6 @@ function validateProfile(body, role) {
   return { updates, errors };
 }
 
-module.exports = { validateProfile, containsContact, PHOTO_MAX_BYTES };
+const hasContactError = (errors) => Object.values(errors || {}).includes(CONTACT_MESSAGE);
+
+module.exports = { validateProfile, containsContact, hasContactError, CONTACT_MESSAGE, PHOTO_MAX_BYTES };

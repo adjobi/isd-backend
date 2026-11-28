@@ -1,6 +1,15 @@
 const Booking = require("../models/Booking");
 const Notification = require("../models/Notification");
 const BookingReview = require("../models/BookingReview");
+const { maskName, toPlain } = require("../utils/names");
+
+// Autre partie d'une réservation : profil public seulement (jamais téléphone, email ni mot de passe),
+// nom réduit à l'initiale (pas de facture ISD réglée sur une réservation).
+const PUBLIC_USER = "firstName lastName photo role city commune availability rating isVerified";
+const maskBooking = (b, field) => {
+  const o = toPlain(b);
+  return o && o[field] && typeof o[field] === "object" ? { ...o, [field]: maskName(o[field]) } : o;
+};
 
 // ======================
 // HELPER: notifier l'autre partie (DB + socket temps réel)
@@ -66,8 +75,8 @@ exports.getFamilyBookings = async (req, res) => {
     const bookings = await Booking.find({
       familyId: req.user.id,
       familyHidden: { $ne: true },
-    }).populate("providerId");
-    res.json(bookings);
+    }).populate("providerId", PUBLIC_USER);
+    res.json(bookings.map((b) => maskBooking(b, "providerId")));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -82,8 +91,8 @@ exports.getProviderBookings = async (req, res) => {
     const bookings = await Booking.find({
       providerId: req.user.id,
       providerHidden: { $ne: true },
-    }).populate("familyId");
-    res.json(bookings);
+    }).populate("familyId", PUBLIC_USER);
+    res.json(bookings.map((b) => maskBooking(b, "familyId")));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -102,7 +111,7 @@ exports.getCompletedMissions = async (req, res) => {
       .populate("familyId", "firstName lastName city")
       .sort({ updatedAt: -1 });
 
-    res.json(missions);
+    res.json(missions.map((m) => maskBooking(m, "familyId")));
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

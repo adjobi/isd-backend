@@ -4,7 +4,15 @@ const { register, login } = require("../controllers/authController");
 const authMiddleware = require("../middleware/authMiddleware");
 const User = require("../models/User");
 const IdentityCheck = require("../models/IdentityCheck");
-const { validateProfile } = require("../validators/profile");
+const { validateProfile, hasContactError } = require("../validators/profile");
+const { recordContactStrike } = require("../services/moderation");
+// Modifications de profil limitées par compte (anti-abus, essais répétés de coordonnées).
+const profileLimiter = require("../middleware/rateLimit")({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  key: (req) => req.user?.id,
+  message: "Trop de modifications du profil en peu de temps. Réessayez dans une heure.",
+});
 const { NAME_CHANGED_REASON, rejectPendingUpdate } = require("../services/identity");
 
 // ======================
@@ -53,9 +61,10 @@ router.put("/availability", authMiddleware, async (req, res) => {
 // METTRE À JOUR LE PROFIL ENRICHI
 // ======================
 // Corps limité à 450 Ko (photo de 300 Ko max en base64) : voir PROFILE_BODY_LIMIT dans server.js.
-router.put("/profile", authMiddleware, async (req, res) => {
+router.put("/profile", authMiddleware, profileLimiter, async (req, res) => {
   try {
     const { updates, errors } = validateProfile(req.body, req.user.role);
+    if (hasContactError(errors)) await recordContactStrike(req.user.id, "profile");
     if (Object.keys(errors).length > 0) {
       return res.status(400).json({ message: "Merci de corriger les champs en surbrillance", errors });
     }

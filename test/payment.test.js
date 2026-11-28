@@ -308,7 +308,7 @@ describe("Garantie de remplacement", () => {
 
   test("offre de remplacement : facture offerte et réglée dès la date convenue", async () => {
     mock.method(Invoice, "findOne", async () => null);
-    mock.method(Offer, "findById", async () => ({ _id: OFFER_ID, agreedPrice: 60000, duration: "long", feeWaived: true, async save() {} }));
+    mock.method(Offer, "findById", async () => ({ _id: OFFER_ID, acceptedProvider: PROVIDER_ID, agreedPrice: 60000, duration: "long", feeWaived: true, async save() {} }));
     users({ [PROVIDER_ID]: { pricingType: "month" } });
     mock.method(Setting, "findOne", () => q(null));
     let created;
@@ -342,5 +342,77 @@ describe("Contrat", () => {
     assert.equal(contract.terms.noticeDays, 7);
     await as("post", `/api/payments/${OFFER_ID}/contract/accept`, NANNY);
     assert.equal(notifs.mock.callCount(), 1);
+  });
+});
+
+describe("Paiement et discussions par prestataire", () => {
+  afterEach(() => mock.restoreAll());
+  const OTHER_PROVIDER = "64b0000000000000000000c2";
+
+  test("facture : jamais depuis la discussion d'un candidat non retenu, ni avant l'accord", async () => {
+    mock.method(Invoice, "findOne", async () => null);
+    mock.method(Offer, "findById", async () => ({ _id: OFFER_ID, acceptedProvider: PROVIDER_ID, agreedPrice: 60000, duration: "long" }));
+    const create = mock.method(Invoice, "create", async (d) => d);
+    const other = { offerId: OFFER_ID, familyId: FAMILY_ID, providerId: OTHER_PROVIDER, status: "active", startDate: new Date() };
+    assert.equal(await payment.ensureInvoice(other, null), null);
+    assert.equal(await payment.ensureInvoice({ ...other, providerId: PROVIDER_ID, status: "discussion" }, null), null);
+    assert.equal(create.mock.callCount(), 0);
+  });
+
+  test("paiement confirmé : coordonnées débloquées dans la seule discussion de l'accord", async () => {
+    const { session } = paidEffects();
+    const filters = [];
+    mock.method(ChatSession, "findOne", async (f) => { filters.push(f); return session; });
+    const msgs = mock.method(ChatMessage, "create", async (d) => d);
+    await payment.markPaid(fakeInvoice({ status: "submitted" }), { method: "manual" });
+    assert.ok(filters.length > 0);
+    for (const f of filters) assert.equal(String(f.providerId), PROVIDER_ID);
+    assert.equal(session.isPaid, true);
+    assert.equal(msgs.mock.calls[0].arguments[0].providerId, PROVIDER_ID);
+  });
+
+  test("facture créée à la consultation : seulement via la discussion du prestataire retenu", async () => {
+    mock.method(Invoice, "findOne", async () => null);
+    mock.method(Offer, "findById", () => q({ _id: OFFER_ID, acceptedProvider: PROVIDER_ID }));
+    let filter;
+    mock.method(ChatSession, "findOne", async (f) => { filter = f; return null; });
+    const res = await as("get", `/api/payments/${OFFER_ID}`, tokenFor(OTHER_PROVIDER, "nanny"));
+    assert.equal(res.status, 404);
+    assert.equal(String(filter.providerId), PROVIDER_ID);
+  });
+});
+
+describe("Unité figée à l'accord", () => {
+  afterEach(() => mock.restoreAll());
+
+  test("la facture utilise l'unité convenue (offer.agreedUnit), pas l'unité actuelle du profil", async () => {
+    mock.method(Invoice, "findOne", async () => null);
+    mock.method(Offer, "findById", async () => ({ _id: OFFER_ID, acceptedProvider: PROVIDER_ID, agreedPrice: 3000, agreedUnit: "hour", duration: "long" }));
+    users({ [PROVIDER_ID]: { pricingType: "month" } });
+    mock.method(Setting, "findOne", () => q(null));
+    let created;
+    mock.method(Invoice, "create", async (d) => { created = { ...d, async save() {} }; return created; });
+    mock.method(ChatMessage, "create", async (d) => d);
+    mock.method(Notification, "create", async () => ({}));
+    const session = { offerId: OFFER_ID, familyId: FAMILY_ID, providerId: PROVIDER_ID, status: "agreement_reached", startDate: new Date() };
+    await payment.ensureInvoice(session, null);
+    assert.equal(created.breakdown.unit, "hour");
+    const expected = computeFee({ agreedPrice: 3000, unit: "hour", duration: "long", waived: false }, DEFAULT_PRICING);
+    assert.equal(created.amount, expected.amount);
+  });
+});
+
+describe("Mes missions : noms avant paiement", () => {
+  afterEach(() => mock.restoreAll());
+
+  test("initiale tant que la facture n'est pas réglée, nom complet ensuite", async () => {
+    mock.method(Invoice, "find", () => q([fakeInvoice({ status: "pending" }), fakeInvoice({ status: "paid", offerId: "64b0000000000000000000b2" })]));
+    mock.method(Offer, "findById", () => q({ description: "Garde" }));
+    mock.method(User, "findById", () => q({ firstName: "Aya", lastName: "Kouassi" }));
+    mock.method(Contract, "findOne", () => q(null));
+    const res = await as("get", "/api/payments/mine", FAMILY);
+    assert.equal(res.status, 200);
+    assert.equal(res.body[0].other.lastName, "K.");
+    assert.equal(res.body[1].other.lastName, "Kouassi");
   });
 });

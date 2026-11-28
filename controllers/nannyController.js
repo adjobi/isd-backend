@@ -9,6 +9,8 @@ const PUBLIC_PROVIDER_FIELDS = [
   "availability", "rating", "isVerified", "createdAt",
 ].join(" ");
 
+const { maskNames } = require("../utils/names");
+
 const PROVIDER_TYPES = ["nanny", "tutor"];
 const AVAILABILITIES = ["available", "busy", "away", "holiday"];
 const MAX_TEXT = 60;
@@ -88,7 +90,8 @@ exports.getNannies = async (req, res) => {
       .limit(perPage)
       .lean();
 
-    return res.json(providers);
+    // Recherche : aucun accord payé avec la famille, nom réduit à l'initiale (« Kouassi » → « K. »).
+    return res.json(maskNames(providers));
   } catch (error) {
     console.error("getNannies:", error);
     return res.status(500).json({ message: "Erreur serveur lors de la recherche" });

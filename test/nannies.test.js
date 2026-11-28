@@ -81,3 +81,27 @@ describe("GET /api/nannies — recherche de prestataires", () => {
     assert.equal(res.status, 400);
   });
 });
+
+describe("Noms des prestataires avant paiement (initiale)", () => {
+  afterEach(() => mock.restoreAll());
+
+  test("recherche : nom réduit à l'initiale, prénom conservé", async () => {
+    mock.method(User, "find", () => chain([{ firstName: "Aya", lastName: "Kouassi" }, { firstName: "Awa", lastName: "" }], {}));
+    const res = await request(app).get("/api/nannies?city=Abidjan").set("Authorization", `Bearer ${FAMILY}`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body.map((p) => [p.firstName, p.lastName]), [["Aya", "K."], ["Awa", ""]]);
+  });
+
+  test("réservations (ancien parcours) : profil public seulement, nom à l'initiale", async () => {
+    const Booking = require("../models/Booking");
+    const ctrl = require("../controllers/bookingController");
+    let fields;
+    mock.method(Booking, "find", () => ({
+      populate(path, f) { fields = f; return Promise.resolve([{ toObject: () => ({ _id: "b1", providerId: { firstName: "Aya", lastName: "Kouassi" } }) }]); },
+    }));
+    let body;
+    await ctrl.getFamilyBookings({ user: { id: "64b000000000000000000001" } }, { json: (b) => { body = b; }, status() { return this; } });
+    for (const forbidden of ["phone", "email", "password"]) assert.ok(!fields.split(/\s+/).includes(forbidden), forbidden);
+    assert.equal(body[0].providerId.lastName, "K.");
+  });
+});

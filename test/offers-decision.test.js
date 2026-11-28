@@ -1,8 +1,9 @@
-const { test, describe, afterEach, mock } = require("node:test");
+const { test, describe, afterEach, beforeEach, mock } = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
 const Offer = require("../models/Offer");
 const Notification = require("../models/Notification");
+const { ChatSession } = require("../models/Chat");
 const { tokenFor, buildApp } = require("./helpers");
 
 const app = buildApp();
@@ -76,6 +77,8 @@ describe("POST /api/offers/:offerId/reject/:providerId", () => {
 
 describe("POST /api/offers/:offerId/accept/:providerId", () => {
   afterEach(() => mock.restoreAll());
+  // Pas de discussion enregistrée (ouverte à la volée par l'accord)
+  beforeEach(() => mock.method(ChatSession, "findOne", async () => null));
 
   test("refuse d'accepter quelqu'un qui n'a pas candidaté (404)", async () => {
     const offer = fakeOffer();
@@ -89,8 +92,12 @@ describe("POST /api/offers/:offerId/accept/:providerId", () => {
     assert.equal(notify.mock.callCount(), 0);
   });
 
+  // Étape salaire, dernier prix proposé par le prestataire : c'est à la famille de répondre.
+  const atSalary = (a, amount) => Object.assign(a, { stage: "salary", history: [{ by: "provider", amount }], lastOfferBy: "provider" });
+
   test("accepte un candidat et refuse automatiquement les autres (200)", async () => {
     const offer = fakeOffer();
+    atSalary(offer.applications[0], 50000);
     mock.method(Offer, "findById", async () => offer);
     mock.method(Notification, "create", async () => ({}));
     const res = await request(app)
@@ -103,6 +110,7 @@ describe("POST /api/offers/:offerId/accept/:providerId", () => {
 
   test("refuse un accord sans prix convenu (409)", async () => {
     const offer = fakeOffer();
+    offer.applications[0].stage = "salary";
     offer.applications[0].proposedPrice = null;
     mock.method(Offer, "findById", async () => offer);
     const notify = mock.method(Notification, "create", async () => ({}));
@@ -110,9 +118,20 @@ describe("POST /api/offers/:offerId/accept/:providerId", () => {
       .post(`/api/offers/${OFFER_ID}/accept/${P1}`)
       .set("Authorization", `Bearer ${tokenFor(OWNER_ID, "family")}`);
     assert.equal(res.status, 409);
-    assert.match(res.body.message, /prix/);
+    assert.match(res.body.message, /salaire/);
     assert.equal(offer.status, "open");
     assert.equal(notify.mock.callCount(), 0);
+  });
+
+  test("pas d'accord tant que la mission n'est pas validée des deux côtés (409)", async () => {
+    const offer = fakeOffer();
+    offer.applications[0].stage = "discussion";
+    mock.method(Offer, "findById", async () => offer);
+    const res = await request(app)
+      .post(`/api/offers/${OFFER_ID}/accept/${P1}`)
+      .set("Authorization", `Bearer ${tokenFor(OWNER_ID, "family")}`);
+    assert.equal(res.status, 409);
+    assert.equal(offer.status, "open");
   });
 
   test("une autre famille ne peut pas accepter (403)", async () => {

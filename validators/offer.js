@@ -7,6 +7,7 @@ const DESCRIPTION_MIN = 20;
 const DESCRIPTION_MAX = 600;
 const MESSAGE_MAX = 300;
 const MAX_COUNTERS = 3; // contre-propositions par partie et par candidature
+const AMOUNT_STEP = 500; // montants négociés et budgets : multiples de 500 FCFA
 const CONTACT_MESSAGE = "Pas de téléphone, email, lien ni réseau social : les coordonnées sont partagées après paiement de la facture ISD.";
 
 const isStr = (v) => typeof v === "string";
@@ -17,6 +18,7 @@ function readAmount(v) {
   if (typeof v !== "number" || !Number.isInteger(v) || v < PRICE_MIN || v > PRICE_MAX) {
     return { error: `Montant entre ${PRICE_MIN} et ${PRICE_MAX.toLocaleString("fr-FR")} FCFA` };
   }
+  if (v % AMOUNT_STEP !== 0) return { error: `Le montant doit être un multiple de ${AMOUNT_STEP} FCFA.` };
   return { value: v };
 }
 
@@ -84,4 +86,7 @@ function validateOffer(body, { partial = false, serviceType: currentType } = {})
   return { data, errors };
 }
 
-module.exports = { validateOffer, readAmount, readMessage, MAX_COUNTERS, PRICE_MIN, PRICE_MAX };
+// La validation a-t-elle refusé des coordonnées ? (compteur de tentatives, services/moderation.js)
+const hasContactError = (errors) => Object.values(errors || {}).includes(CONTACT_MESSAGE);
+
+module.exports = { validateOffer, readAmount, readMessage, hasContactError, MAX_COUNTERS, AMOUNT_STEP, PRICE_MIN, PRICE_MAX, CONTACT_MESSAGE };

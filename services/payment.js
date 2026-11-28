@@ -4,7 +4,6 @@ const Invoice = require("../models/Invoice");
 const Contract = require("../models/Contract");
 const Offer = require("../models/Offer");
 const User = require("../models/User");
-const { ChatSession } = require("../models/Chat");
 const chat = require("./chat");
 const { getPricing, computeFee } = require("./pricing");
 const { COMMITMENTS } = require("./engagement");
@@ -16,16 +15,19 @@ const idOf = chat.idOf;
 
 // Crée la facture d'une offre conclue dont la date de début est convenue (idempotent).
 // Offre de remplacement (garantie) : facture offerte, réglée immédiatement.
+// Seule la discussion de l'accord conclu (offre × prestataire retenu) peut produire la facture.
 async function ensureInvoice(session, io) {
+  if (!session || session.status === "discussion") return null;
   const existing = await Invoice.findOne({ offerId: session.offerId });
   if (existing) return existing;
   const offer = await Offer.findById(session.offerId);
   if (!offer) return null;
+  if (!offer.acceptedProvider || idOf(offer.acceptedProvider) !== idOf(session.providerId)) return null;
   const provider = await User.findById(session.providerId).select("pricingType").lean();
   const pricing = await getPricing();
   const fee = computeFee({
     agreedPrice: offer.agreedPrice || offer.price,
-    unit: provider?.pricingType || "month",
+    unit: offer.agreedUnit || provider?.pricingType || "month", // unité figée à l'accord
     duration: offer.duration,
     waived: !!offer.feeWaived,
   }, pricing);
@@ -54,8 +56,8 @@ async function ensureInvoice(session, io) {
   const msg = await chat.systemMessage(session,
     `🧾 Facture ISD : ${formatFCFA(invoice.amount)} (référence ${invoice.reference}).\n\nElle est réglée une seule fois par la famille. Dès le paiement confirmé, les coordonnées et le récapitulatif de vos engagements sont disponibles pour les deux parties.`,
     { type: "invoice", meta: { kind: "invoice", amount: invoice.amount, reference: invoice.reference } });
-  chat.emitMessage(io, msg);
-  await chat.notify(session.familyId, "Facture ISD disponible", `Montant : ${formatFCFA(invoice.amount)}. Réglez-la pour obtenir les coordonnées du prestataire.`, session.offerId);
+  chat.emitMessage(io, msg, session);
+  await chat.notify(session.familyId, "Facture ISD disponible", `Montant : ${formatFCFA(invoice.amount)}. Réglez-la pour obtenir les coordonnées du prestataire.`, session.offerId, session._id);
   return invoice;
 }
 
@@ -122,7 +124,8 @@ async function markPaid(invoice, { method, by = null, io = null } = {}) {
     console.error("après paiement (offre / récapitulatif)", err);
   }
 
-  const session = await ChatSession.findOne({ offerId: invoice.offerId }).catch(() => null);
+  // Coordonnées débloquées dans la seule discussion de l'accord (offre × prestataire facturé).
+  const session = await agreementSession(invoice).catch(() => null);
   if (session) {
     session.isPaid = true;
     session.infoRevealed = true;
@@ -133,13 +136,18 @@ async function markPaid(invoice, { method, by = null, io = null } = {}) {
         ? "✅ Mise en relation offerte au titre de la garantie de remplacement. Les coordonnées sont disponibles dans « Mission ». Confirmez-y ensemble vos engagements et la durée du préavis."
         : "✅ Facture ISD réglée, merci ! Les coordonnées sont maintenant disponibles dans « Mission ».\n\nDernière étape : confirmez-y chacun le récapitulatif de vos engagements, avec la durée de préavis que vous convenez ensemble. Bonne collaboration !",
       { meta: { kind: "paid" } });
-    chat.emitMessage(io, msg);
+    chat.emitMessage(io, msg, session);
     chat.emitSession(io, session);
   }
   for (const userId of [invoice.family, invoice.provider]) {
-    await chat.notify(userId, "Mise en relation confirmée ✅", "Coordonnées disponibles. Confirmez maintenant vos engagements dans « Mission ».", invoice.offerId);
+    await chat.notify(userId, "Mise en relation confirmée ✅", "Coordonnées disponibles. Confirmez maintenant vos engagements dans « Mission ».", invoice.offerId, session?._id);
   }
   return invoice;
+}
+
+// Discussion de l'accord d'une facture : (offre, prestataire facturé).
+function agreementSession(invoice) {
+  return chat.findSession(invoice.offerId, invoice.provider);
 }
 
 // Rôle de l'utilisateur sur une facture.
@@ -150,4 +158,4 @@ const invoiceRole = (invoice, userId) => {
   return null;
 };
 
-module.exports = { ensureInvoice, ensureContract, markPaid, buildTerms, invoiceRole, newReference, formatFCFA };
+module.exports = { agreementSession, ensureInvoice, ensureContract, markPaid, buildTerms, invoiceRole, newReference, formatFCFA };
